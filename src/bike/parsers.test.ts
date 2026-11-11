@@ -23,6 +23,14 @@ describe('standard Bluetooth measurements', () => {
     expect(parseIndoorBike(legacy)).toMatchObject({ cadence: 49, watts: 21, resistance: 10, resistanceBytes: 2 });
     expect(parseIndoorBike(bytes(0x64, 0, 0, 0, 98, 0, 10, 21, 0))).toMatchObject({ cadence: 49, watts: 21, resistanceBytes: 1 });
   });
+  it('decodes a user-verified FTMS capture with two-byte resistance and split notifications', () => {
+    // Standard measurement bytes only; no account/device identifiers or timestamps.
+    const workout = bytes(0xf5, 0x01, 0x32, 0x00, 0x1a, 0x02, 0x00, 0x08, 0x00, 0x07, 0x00, 0x0f, 0x00, 0x05, 0x00, 0xff, 0xff, 0xff);
+    expect(parseIndoorBike(workout)).toMatchObject({ flags: 501, cadence: 25, distanceM: 538, resistance: 8, resistanceBytes: 2, watts: 7, averageWatts: 15, energyKcal: 5 });
+    expect(parseIndoorBike(workout).speedKph).toBeUndefined();
+    expect(() => parseIndoorBike(workout, 'gss2026')).toThrow('layout mismatch');
+    expect(parseIndoorBike(bytes(0x00, 0x08, 0xb5, 0x03, 0x85, 0x00))).toEqual({ flags: 2048, speedKph: 9.49, elapsedSeconds: 133 });
+  });
   it('rejects trailing bytes and unknown flags instead of guessing a watt multiplier', () => {
     expect(() => parseIndoorBike(bytes(0x44, 0, 0, 0, 98, 0, 21, 0, 99))).toThrow('Unexpected');
     expect(() => parseIndoorBike(bytes(0, 0x80, 0, 0))).toThrow('reserved');
