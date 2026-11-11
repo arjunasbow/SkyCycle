@@ -3,3 +3,11 @@ dist/
 *.local
 test-results/
 *.tsbuildinfo
+.certs/
+.local/
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt

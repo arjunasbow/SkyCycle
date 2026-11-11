@@ -14,7 +14,21 @@ npm run build
 npm run preview
 ```
 
-The development server is HTTP. `localhost` is suitable for desktop Web Bluetooth testing; a phone opening your computer's LAN IP needs trusted HTTPS. Use a Pages deployment below for phone testing. Never bypass certificate warnings. The app is static and has no backend, account, telemetry or diagnostic upload. Fonts are an optional Google Fonts stylesheet; system fonts work offline. No secret environment variables are needed.
+The ordinary development server is HTTP. `localhost` is suitable for desktop Web Bluetooth testing; a phone opening your computer's LAN IP needs trusted HTTPS. Use local HTTPS below or a Pages deployment for phone testing. Never bypass certificate warnings. The app is static and has no backend, account, telemetry or diagnostic upload. Fonts are an optional Google Fonts stylesheet; system fonts work offline. No secret environment variables are needed.
+
+### Local HTTPS and iPhone access with mkcert
+
+1. Install [mkcert](https://github.com/FiloSottile/mkcert). On Windows: `winget install --id FiloSottile.mkcert --exact --source winget`. Open a new terminal after installation so its PATH includes mkcert.
+2. Run `npm run setup:https`. This generates a server certificate for localhost, the PC hostname, and current IPv4 addresses. It creates the CA in mkcert's default per-user directory if needed. It does **not** change your PC's certificate trust store. Optional PC trust is a separate `mkcert -install` step you can perform yourself; it is unnecessary for iPhone-only testing.
+3. Run `npm run dev:https` and leave it running. It listens on HTTPS port **5173** and requires the generated certificates (no silent HTTP fallback). Keep the PC and iPhone on the same local network.
+4. In a second terminal run `npm run cert:serve`. It prints an HTTP certificate download link on port **5180**. Open that link in **Safari on iPhone** to download `skycycle-rootCA.cer`. This bootstrap server serves only the public certificate and an instruction page; it cannot browse the project or CA directory.
+5. On iPhone, open **Settings → Profile Downloaded**, or **General → VPN & Device Management**, select the downloaded mkcert certificate profile, and install it. Then go to **Settings → General → About → Certificate Trust Settings** and enable full trust for that root certificate. See [Apple's certificate trust instructions](https://support.apple.com/en-us/102390).
+6. Open the printed **HTTPS** app address in **Bluefy**, such as `https://<PC-LAN-IP>:5173/`. It should load without a certificate warning. Tap Connect Bluetooth bike to request bike access. Actual hardware compatibility still needs testing.
+7. Stop the certificate-download server with Ctrl+C after installation. Keep the HTTPS server running for your ride. After a restart, use `npm run dev:https` again. Regenerate with `npm run setup:https` when your PC's LAN IP changes; the iPhone trust remains valid while the same mkcert CA is used.
+
+Windows Firewall must permit Node on the current network for these ports, and guest Wi-Fi/client isolation can prevent phone-to-PC traffic. HTTPS assets use relative URLs, so no hostname change in application code is required. Port 5173 is strict: stop an existing HTTP development server before starting HTTPS.
+
+The generated `.certs/` directory and certificate/key extensions are ignored by Git. Vite explicitly refuses to serve `.certs`, `.local` and private-key/certificate paths. Only the **public** root certificate is copied for phone installation; never share `rootCA-key.pem` or `skycycle-key.pem`, and never put keys in `public/`. Trusting this development CA allows your phone to trust certificates it signs; install only the CA you generated on your own PC. Remove its iPhone profile when local testing is no longer needed. Local CA certificates are for development, not deployment.
 
 ## Phase 1 — read-only BLE diagnostics
 
