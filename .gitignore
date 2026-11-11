@@ -5,6 +5,7 @@ test-results/
 *.tsbuildinfo
 .certs/
 .local/
+.wrangler/
 *.pem
 *.key
 *.p12

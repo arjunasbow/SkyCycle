@@ -9,6 +9,8 @@
     "dev:https": "vite --mode local-https --host 0.0.0.0 --port 5173 --strictPort",
     "cert:serve": "node scripts/serve-certificate.mjs",
     "build": "tsc -b && vite build",
+    "deploy": "wrangler deploy",
+    "deploy:check": "wrangler deploy --dry-run --outdir .local/worker-check",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run"
   },
@@ -26,6 +28,7 @@
     "@vitejs/plugin-react": "^5.1.0",
     "typescript": "~5.9.3",
     "vite": "^7.2.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "wrangler": "^4.160.0"
   }
 }

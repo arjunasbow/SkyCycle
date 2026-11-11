@@ -117,6 +117,22 @@ The footer reports **AWAKE**, **AWAKE OFF**, **WAKE REQUEST** or **SLEEP POSSIBL
 
 Both targets provide HTTPS. No SPA route rewrites are necessary: navigation stays within one page and Vite uses a relative asset base for project subpaths.
 
+### Cloudflare Workers — orionrepository.com/skycycle/ (configured target)
+
+`wrangler.toml` deploys a separate Worker named **skycycle**, with only `dist/` uploaded as static assets and `server/worker.ts` as the subdirectory handler. Its two routes cover `orionrepository.com/skycycle` and `orionrepository.com/skycycle/*`. The existing Orion Worker handles the rest of the domain. The account must own the active `orionrepository.com` Cloudflare zone and its hostname must already be proxied/served through Cloudflare. This config does not change the main Orion repository, DNS or root-domain binding.
+
+To connect GitHub and enable automatic deployment:
+
+1. In the Cloudflare account dashboard, open **Workers & Pages → Create application → Import a repository / Connect GitHub**, then choose **arjunasbow/SkyCycle**. Authorize Cloudflare's GitHub integration for this repository if requested; ChatGPT's GitHub connector is separate.
+2. Select production branch **main**, Worker name **skycycle**, build command **`npm run build`**, deploy command **`npm run deploy`**, and root directory **`/`** (repository root). No additional runtime secrets, account IDs or local certificates belong in the repository. Cloudflare manages the build's deployment authorization.
+3. Deploy the latest commit. Wrangler reads the route and asset configuration, so a successful deployment should install both path routes. If Cloudflare reports missing zone/route permission, use the Worker **Settings → Domains & Routes → Add → Route**, choose zone `orionrepository.com`, and add each of the two patterns above; do not assign the entire apex domain as SkyCycle's custom domain.
+4. Check **`https://orionrepository.com/skycycle/`**, load the flight tab to verify lazy-loaded Three.js assets, and check the main Orion homepage still loads. The separate `workers.dev` deployment URL redirects its root to `/skycycle/` for preview.
+5. Subsequent pushes to `main` trigger Cloudflare builds. The project name in the dashboard must match `skycycle` in Wrangler, or Cloudflare can reject the deploy due to a name mismatch.
+
+The handler preserves the `/skycycle/` public prefix, canonicalizes the trailing slash, and maps requests into the asset binding. It disables automatic asset HTML redirects to prevent redirects leaking to `/index.html`, serves missing assets as 404 (not app HTML), and sets no-cache on the index so new builds can be picked up. Tests cover subdirectory entry redirects, hashed asset URLs, query strings, unrelated paths and missing assets. Private keys/certificates are not part of `dist/` and are never uploaded.
+
+For a local package check without deployment, run `npm run build` then `npm run deploy:check`. For manual deployment from a locally authorized Cloudflare CLI session, run `npm run deploy`. The repository config and dry run do not prove a live deployment: confirm the dashboard's successful deployment and the final URL. Cloudflare dashboard instructions: [Workers Builds settings](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/), [Worker routes](https://developers.cloudflare.com/workers/configuration/routing/routes/).
+
 ### Cloudflare Pages
 
 Push this repository to your GitHub account, then create a Pages project connected to it. Use build command `npm run build`, output directory `dist`, root directory `/`, and Node 24. A preview deployment is sufficient for phone testing. For a direct upload, run `npm ci && npm run build` locally and upload `dist` using the Cloudflare Pages dashboard. Do not upload source diagnostics or personal captures.

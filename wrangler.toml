@@ -1,0 +1,16 @@
+name = "skycycle"
+main = "server/worker.ts"
+compatibility_date = "2026-11-11"
+workers_dev = true
+
+routes = [
+  { pattern = "orionrepository.com/skycycle", zone_name = "orionrepository.com" },
+  { pattern = "orionrepository.com/skycycle/*", zone_name = "orionrepository.com" }
+]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+not_found_handling = "none"
