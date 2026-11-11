@@ -1,0 +1,54 @@
+import type { BikeDataAdapter, BikeState } from '../bike/types';
+export interface Calibration { referenceWatts: number; referenceCadence: number; gain: number; }
+export const DEFAULT_CALIBRATION: Calibration = { referenceWatts: 80, referenceCadence: 60, gain: 1 };
+export const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+export class FlightInputAdapter {
+  private state: BikeState;
+  private unsubscribe: () => void;
+  constructor(adapter: BikeDataAdapter) { this.state = adapter.getState(); this.unsubscribe = adapter.subscribe(state => { this.state = state; }); }
+  effort(now: number, calibration: Calibration): number {
+    const { sample: s, status } = this.state;
+    if (status !== 'connected' && status !== 'simulated') return 0;
+    const fresh = (at: number) => now >= at && now - at < 3000;
+    const cadenceFresh = fresh(s.cadenceAt ?? s.timestamp), powerFresh = fresh(s.wattsAt ?? s.timestamp);
+    // A previously reported cadence is a safety gate, even when power keeps arriving.
+    if (s.cadence !== undefined && (!cadenceFresh || !Number.isFinite(s.cadence) || s.cadence < 3)) return 0;
+    const power = s.watts !== undefined && Number.isFinite(s.watts) && powerFresh ? s.watts : undefined;
+    const cadence = s.cadence !== undefined && Number.isFinite(s.cadence) && cadenceFresh ? s.cadence : undefined;
+    const normalized = power !== undefined ? Math.max(0, power) / Math.max(20, calibration.referenceWatts) : cadence !== undefined ? cadence / Math.max(20, calibration.referenceCadence) : 0;
+    return clamp(normalized * clamp(calibration.gain, .25, 2), 0, 1.5);
+  }
+  dispose() { this.unsubscribe(); }
+}
+export interface FlightControls { steer: number; pitch: number; }
+export interface FlightState { x: number; y: number; z: number; heading: number; bank: number; pitch: number; speed: number; verticalSpeed: number; thrust: number; elapsed: number; }
+export function initialFlight(): FlightState { return { x: 0, y: 45, z: 110, heading: 0, bank: 0, pitch: 0, speed: 15, verticalSpeed: 0, thrust: 0, elapsed: 0 }; }
+/** Fixed-step-friendly arcade physics. Units: metres, seconds, m/s, radians. */
+export function stepFlight(s: FlightState, controls: FlightControls, effort: number, dt: number, floor = 4) {
+  dt = clamp(dt, 0, 1 / 30);
+  const smooth = (current: number, target: number, response: number) => current + (target - current) * (1 - Math.exp(-response * dt));
+  s.thrust = smooth(s.thrust, clamp(effort, 0, 1.5), effort ? 1.4 : .8);
+  s.bank = smooth(s.bank, clamp(controls.steer, -1, 1) * .55, 4);
+  s.pitch = smooth(s.pitch, clamp(controls.pitch, -1, 1) * .35, 3);
+  s.heading = clamp(s.heading + s.bank * .8 * dt, -1.2, 1.2);
+  const gravity = 9.81, lift = Math.min(10, s.speed * .39) * Math.min(1, s.thrust + .12);
+  s.verticalSpeed = clamp(s.verticalSpeed + (lift - gravity * .75 + s.pitch * s.speed * .85 - s.verticalSpeed * 1.4) * dt, -5, 8);
+  s.speed = clamp(s.speed + (s.thrust * 8 - .009 * s.speed * s.speed - gravity * Math.sin(s.pitch) * .25) * dt, 0, 38);
+  s.x = clamp(s.x + Math.sin(s.heading) * s.speed * dt, -470, 470);
+  s.z -= Math.cos(s.heading) * s.speed * dt;
+  s.y = clamp(s.y + s.verticalSpeed * dt, floor, 200);
+  if (s.y <= floor || s.y >= 200) s.verticalSpeed = 0;
+  s.elapsed += dt;
+}
+export interface Target { x: number; y: number; z: number; radius: number; hit: boolean; kind: 'ring' | 'balloon'; }
+/** Segment/plane crossing prevents missed targets when a slow frame skips past a ring. */
+export function collectTargets(previous: Pick<FlightState, 'x' | 'y' | 'z'>, current: Pick<FlightState, 'x' | 'y' | 'z'>, targets: Target[]): number {
+  let score = 0;
+  for (const t of targets) {
+    if (t.hit || previous.z < t.z || current.z > t.z || current.z === previous.z) continue;
+    const ratio = (previous.z - t.z) / (previous.z - current.z);
+    const x = previous.x + (current.x - previous.x) * ratio, y = previous.y + (current.y - previous.y) * ratio;
+    if (Math.hypot(x - t.x, y - t.y) <= t.radius) { t.hit = true; score += t.kind === 'ring' ? 100 : 250; }
+  }
+  return score;
+}

@@ -1,2 +1,145 @@
+import { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
 import type { BikeDataAdapter, BikeState } from '../bike/types';
-export default function Game(_props: { adapter: BikeDataAdapter; state: BikeState; simulate: () => void }) { return <div className="panel"><h2>Flight simulation</h2><p>The shared bike interface is ready. The valley simulation is being prepared.</p></div>; }
+import { clamp, collectTargets, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight, type Calibration, type FlightControls } from './flight';
+import { createWorld, terrainHeight, type Quality } from './world';
+import './game.css';
+type PlayStatus = 'ready' | 'running' | 'paused' | 'finished';
+type Mode = 'scenic' | 'arcade';
+interface Stats { speed: number; altitude: number; score: number; elapsed: number; fps: number; target: string; direction: string; }
+const clock = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
+export default function Game({ adapter, state, simulate }: { adapter: BikeDataAdapter; state: BikeState; simulate: () => void }) {
+  const host = useRef<HTMLDivElement>(null), engine = useRef<{ reset: () => void } | null>(null);
+  const controls = useRef<FlightControls>({ steer: 0, pitch: 0 }), keys = useRef(new Set<string>());
+  const [status, setStatus] = useState<PlayStatus>('ready'), statusRef = useRef<PlayStatus>('ready');
+  const [mode, setMode] = useState<Mode>('scenic'), modeRef = useRef<Mode>('scenic');
+  const [quality, setQuality] = useState<Quality>('low');
+  const [calibration, setCalibration] = useState<Calibration>(DEFAULT_CALIBRATION), calibrationRef = useRef(calibration);
+  const [stats, setStats] = useState<Stats>({ speed: 0, altitude: 45, score: 0, elapsed: 0, fps: 0, target: 'First ring ahead', direction: '↑' });
+  const [error, setError] = useState(''), [tilt, setTilt] = useState(false), [tiltMessage, setTiltMessage] = useState('');
+  const [tiltSupported, setTiltSupported] = useState(false);
+  const tiltValue = useRef<FlightControls>({ steer: 0, pitch: 0 }), tiltBaseline = useRef<{ x: number; y: number } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const changeStatus = (next: PlayStatus) => { statusRef.current = next; setStatus(next); };
+  useEffect(() => { calibrationRef.current = calibration; }, [calibration]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { setTiltSupported(typeof DeviceOrientationEvent !== 'undefined'); }, []);
+  const source = useRef<FlightInputAdapter | null>(null);
+  useEffect(() => { const input = new FlightInputAdapter(adapter); source.current = input; return () => { input.dispose(); }; }, [adapter]);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.matches('input,select,textarea,button,summary')) return;
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'a', 'd', 'w', 's', 'A', 'D', 'W', 'S', ' '].includes(e.key)) { e.preventDefault(); keys.current.add(e.key.toLowerCase()); }
+      if (e.key === ' ' && !e.repeat && (statusRef.current === 'running' || statusRef.current === 'paused')) changeStatus(statusRef.current === 'running' ? 'paused' : 'running');
+    };
+    const up = (e: KeyboardEvent) => { keys.current.delete(e.key.toLowerCase()); };
+    const blur = () => { keys.current.clear(); controls.current = { steer: 0, pitch: 0 }; tiltValue.current = { steer: 0, pitch: 0 }; if (statusRef.current === 'running') changeStatus('paused'); };
+    const visibility = () => { if (document.hidden) blur(); };
+    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur); document.addEventListener('visibilitychange', visibility);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); document.removeEventListener('visibilitychange', visibility); };
+  }, []);
+  useEffect(() => {
+    if (!tilt) return;
+    let received = false;
+    const handler = (e: DeviceOrientationEvent) => {
+      if (e.beta === null || e.gamma === null) return;
+      received = true;
+      const angle = (screen.orientation?.angle ?? (window as Window & { orientation?: number }).orientation ?? 0) * Math.PI / 180;
+      const x = e.gamma * Math.cos(angle) + e.beta * Math.sin(angle), y = e.beta * Math.cos(angle) - e.gamma * Math.sin(angle);
+      if (!tiltBaseline.current) tiltBaseline.current = { x, y };
+      tiltValue.current = { steer: clamp((x - tiltBaseline.current.x) / 22, -1, 1), pitch: clamp(-(y - tiltBaseline.current.y) / 20, -1, 1) };
+    };
+    const orientation = () => { tiltBaseline.current = null; tiltValue.current = { steer: 0, pitch: 0 }; };
+    window.addEventListener('deviceorientation', handler); window.addEventListener('orientationchange', orientation);
+    const timeout = setTimeout(() => { if (!received) { setTilt(false); setTiltMessage('No orientation data received. Touch and keyboard controls remain available.'); } }, 4000);
+    return () => { clearTimeout(timeout); window.removeEventListener('deviceorientation', handler); window.removeEventListener('orientationchange', orientation); tiltValue.current = { steer: 0, pitch: 0 }; };
+  }, [tilt]);
+  const enableTilt = async () => {
+    if (tilt) { setTilt(false); return; }
+    if (!window.isSecureContext) { setTiltMessage('Tilt requires HTTPS.'); return; }
+    try {
+      const Orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
+      if (Orientation.requestPermission && await Orientation.requestPermission() !== 'granted') { setTiltMessage('Motion permission denied. Use touch controls.'); return; }
+      tiltBaseline.current = null; setTilt(true); setTiltMessage('Tilt enabled. Your current phone position is neutral.');
+    } catch { setTiltMessage('Motion access is unavailable. Use touch or keyboard controls.'); }
+  };
+  useEffect(() => {
+    if (!host.current) return;
+    const container = host.current;
+    let renderer: THREE.WebGLRenderer;
+    try { renderer = new THREE.WebGLRenderer({ antialias: quality === 'high', powerPreference: 'high-performance', alpha: false }); }
+    catch { setError('3D rendering is unavailable in this browser. Try enabling WebGL or another supported browser. Bike diagnostics remain available.'); return; }
+    setError('');
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'low' ? 1 : quality === 'medium' ? 1.25 : 1.5));
+    renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
+    renderer.domElement.setAttribute('aria-label', 'Three-dimensional flying bicycle in a mountain valley');
+    container.appendChild(renderer.domElement);
+    const world = createWorld(quality), camera = new THREE.PerspectiveCamera(60, 1, .3, 1700);
+    let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0;
+    const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3();
+    const resetCamera = () => { camera.position.set(flight.x, flight.y + 8, flight.z + 18); look.set(flight.x, flight.y + 3, flight.z - 25); };
+    resetCamera();
+    engine.current = { reset() { flight = initialFlight(); score = 0; world.resetTargets(); resetCamera(); accumulator = 0; } };
+    const resize = () => { const { width, height } = container.getBoundingClientRect(); renderer.setSize(width, height); camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); };
+    const observer = new ResizeObserver(resize); observer.observe(container); resize();
+    const contextLost = (event: Event) => { event.preventDefault(); changeStatus('paused'); setError('The graphics context was lost. Reload the page or choose another quality setting to restart graphics.'); };
+    renderer.domElement.addEventListener('webglcontextlost', contextLost);
+    const animate = (timestamp: number) => {
+      frame = requestAnimationFrame(animate);
+      const dt = Math.min(.1, Math.max(0, (timestamp - lastTime) / 1000)); lastTime = timestamp;
+      if (document.hidden) return;
+      if (statusRef.current === 'running') {
+        const k = keys.current, touch = controls.current;
+        const input = { steer: clamp(touch.steer + tiltValue.current.steer + (k.has('arrowright') || k.has('d') ? 1 : 0) - (k.has('arrowleft') || k.has('a') ? 1 : 0), -1, 1), pitch: clamp(touch.pitch + tiltValue.current.pitch + (k.has('arrowup') || k.has('w') ? 1 : 0) - (k.has('arrowdown') || k.has('s') ? 1 : 0), -1, 1) };
+        const effort = source.current?.effort(Date.now(), calibrationRef.current) ?? 0;
+        accumulator += dt;
+        while (accumulator >= 1 / 60) {
+          const prev = { x: flight.x, y: flight.y, z: flight.z };
+          stepFlight(flight, input, effort, 1 / 60, Math.max(4, terrainHeight(flight.x, flight.z) + 4));
+          score += collectTargets(prev, flight, world.targets); accumulator -= 1 / 60;
+          if (modeRef.current === 'arcade' && (flight.elapsed >= 180 || flight.z < -2350)) { changeStatus('finished'); break; }
+          if (flight.z < -2350) { flight.z = 110; flight.x = 0; flight.heading = 0; world.resetTargets(); resetCamera(); }
+        }
+      } else accumulator = 0;
+      world.bike.position.set(flight.x, flight.y, flight.z); world.bike.rotation.set(flight.pitch, -flight.heading, -flight.bank, 'YXZ');
+      world.update(flight.elapsed, statusRef.current === 'running' ? flight.thrust : .08, dt);
+      targetCamera.set(flight.x - Math.sin(flight.heading) * 18, flight.y + 8, flight.z + Math.cos(flight.heading) * 18);
+      targetLook.set(flight.x + Math.sin(flight.heading) * 28, flight.y + 3 + flight.pitch * 14, flight.z - Math.cos(flight.heading) * 28);
+      camera.position.lerp(targetCamera, 1 - Math.exp(-dt * 4)); look.lerp(targetLook, 1 - Math.exp(-dt * 4)); camera.lookAt(look);
+      renderer.render(world.scene, camera); frameCount++;
+      if (timestamp - statTime > 500) {
+        const next = world.targets.find(t => !t.hit && t.z < flight.z);
+        setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), target: next ? `${next.kind === 'ring' ? 'Ring' : 'Balloon'} · ${Math.round(Math.hypot(next.x - flight.x, next.y - flight.y, next.z - flight.z))} m · ${Math.round(next.y)} m altitude` : 'Follow the valley', direction: next ? next.x - flight.x > 15 ? '↗' : next.x - flight.x < -15 ? '↖' : next.y - flight.y > 8 ? '⇧' : next.y - flight.y < -8 ? '⇩' : '↑' : '↑' });
+        frameCount = 0; statTime = timestamp;
+      }
+    };
+    frame = requestAnimationFrame(animate);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); world.dispose(); renderer.dispose(); renderer.domElement.remove(); engine.current = null; };
+  }, [quality]);
+  const launch = () => { engine.current?.reset(); changeStatus('running'); };
+  const changeQuality = (next: Quality) => { changeStatus('ready'); setQuality(next); };
+  const freshValue = (v: number | undefined, at: number | undefined) => v !== undefined && Date.now() - (at ?? state.sample.timestamp) < 3000 && ['simulated', 'connected'].includes(state.status) ? Math.round(v) : '—';
+  return <section className="flight-workspace">
+    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
+    <div className="flight-view"><div className="scene-host" ref={host}/>
+      <div className="flight-top"><span className="location-tag">↟ THE AMBER VALLEY <small>ORIGINAL WORLD 01</small></span><span className="flight-mode">{mode === 'scenic' ? '∞ SCENIC EXPLORATION' : `ARCADE · ${clock(Math.max(0, 180 - stats.elapsed))} LEFT`}</span></div>
+      <div className="flight-hud"><Hud value={Math.round(stats.speed)} unit="KM/H" label="SPEED"/><Hud value={Math.round(stats.altitude)} unit="M" label="ALTITUDE"/><Hud value={stats.score.toString().padStart(4, '0')} label="SCORE"/><Hud value={clock(stats.elapsed)} label="FLIGHT TIME"/></div>
+      {status === 'running' && <div className="target-guide"><b>{stats.direction}</b><span>{stats.target}<small>Rings +100 · Balloons +250</small></span></div>}
+      {state.status !== 'simulated' && state.status !== 'connected' && status === 'running' && <div className="flight-warning">Bike disconnected · thrust is fading <button onClick={simulate}>Use simulation</button></div>}
+      {(status !== 'running' || error) && <div className="flight-overlay"><div><div className="eyebrow">{status === 'finished' ? 'COURSE COMPLETE' : status === 'paused' ? 'TAKE A BREATHER' : 'YOUR LEGS. YOUR WINGS.'}</div><h2>{error ? 'The skies are on hold.' : status === 'finished' ? 'A ride above the ordinary.' : status === 'paused' ? 'The valley can wait.' : 'Pedal beyond the everyday.'}</h2><p>{error || (status === 'finished' ? `${stats.score} points · ${clock(stats.elapsed)} in the air. Ready for another adventure?` : status === 'paused' ? 'Your flight is paused. Resume when you’re ready.' : 'Follow the river, thread the golden rings, and find your own pace. A comfortable effort is all it takes.')}</p>
+        {status === 'ready' && <div className="mode-select"><button className={mode === 'scenic' ? 'active' : ''} onClick={() => setMode('scenic')}>∞ Scenic ride<small>No timer. Just open skies.</small></button><button className={mode === 'arcade' ? 'active' : ''} onClick={() => setMode('arcade')}>◷ Arcade course<small>Three minutes. Chase a score.</small></button></div>}
+        {!error && <button className="primary launch-button" onClick={() => status === 'paused' ? changeStatus('running') : launch()}>{status === 'paused' ? 'Resume flight' : status === 'finished' ? 'Fly again' : 'Let’s take flight'} <span>↗</span></button>}
+        {state.status !== 'simulated' && state.status !== 'connected' && <button className="secondary" onClick={simulate}>Use simulated bike</button>}
+        <small className="control-hint">← → steer · ↑ ↓ climb / descend · Space to pause<br/>On iPhone, use the touch pads below. No Bluetooth required.</small>
+      </div></div>}
+      <div className="flight-bottom"><div><span className="source-dot"/>{state.status === 'simulated' ? 'SIMULATED BIKE' : state.status === 'connected' ? 'BLUETOOTH BIKE' : 'NO BIKE DATA'} <b>{freshValue(state.sample.cadence, state.sample.cadenceAt)} <small>RPM</small></b><b>{freshValue(state.sample.watts, state.sample.wattsAt)} <small>W</small></b></div><span>{stats.fps} FPS · {quality.toUpperCase()}</span></div>
+    </div>
+    <div className="flight-controls"><TouchPad controls={controls} axis="steer" negative="←" positive="→" label="STEERING"/><div className="flight-tip"><strong>Find your rhythm. The lift will follow.</strong><p>Pedal to build speed. Climb with gentle inputs. Ease off to glide down.</p></div><TouchPad controls={controls} axis="pitch" negative="↓" positive="↑" label="ALTITUDE"/></div>
+    {showSettings && <div className="panel flight-settings"><div className="panel-heading"><h3>Make the flight yours.</h3><button className="text-button" onClick={() => setShowSettings(false)}>Close settings</button></div><p className="muted">Choose a comfortable reference effort. Changes affect virtual thrust only. Adjusting quality restarts the flight. Bluetooth setup and simulation RPM/watts are on the diagnostics tab.</p><div className="settings-grid"><label>Comfortable power <strong>{calibration.referenceWatts} W</strong><input type="range" min="30" max="200" step="5" value={calibration.referenceWatts} onChange={e => setCalibration({ ...calibration, referenceWatts: +e.target.value })}/></label><label>Cadence-only reference <strong>{calibration.referenceCadence} RPM</strong><input type="range" min="30" max="100" value={calibration.referenceCadence} onChange={e => setCalibration({ ...calibration, referenceCadence: +e.target.value })}/></label><label>Thrust gain <strong>{calibration.gain.toFixed(2)}×</strong><input type="range" min=".5" max="1.5" step=".05" value={calibration.gain} onChange={e => setCalibration({ ...calibration, gain: +e.target.value })}/></label><label>Visual quality<select value={quality} onChange={e => changeQuality(e.target.value as Quality)}><option value="low">Low · iPhone default</option><option value="medium">Medium</option><option value="high">High · desktop</option></select></label></div><div className="tilt-row"><button className="secondary" disabled={!tiltSupported} onClick={enableTilt}>{tilt ? 'Disable tilt controls' : 'Enable optional tilt'}</button>{tilt && <button className="secondary" onClick={() => { tiltBaseline.current = null; }}>Recenter tilt</button>}<button className="secondary" onClick={simulate}>Switch to simulated bike</button><button className="secondary" onClick={() => { engine.current?.reset(); changeStatus('ready'); }}>Reset flight</button></div>{tiltMessage && <p role="status" className="muted">{tiltMessage}</p>}<p className="muted">With measured watts, power drives thrust. Cadence-only devices use RPM. If reported cadence stops or becomes stale, thrust decays even when power remains. Power-only devices rely on power freshness. Physics is an arcade approximation, not a training or aerodynamic model.</p></div>}
+  </section>;
+}
+function Hud({ value, unit, label }: { value: string | number; unit?: string; label: string }) { return <div><span>{label}</span><strong>{value}<small>{unit}</small></strong></div>; }
+function TouchPad({ controls, axis, negative, positive, label }: { controls: React.RefObject<FlightControls>; axis: 'steer' | 'pitch'; negative: string; positive: string; label: string }) {
+  const release = () => { controls.current[axis] = 0; };
+  return <div className="touch-pad"><span>{label}</span><div>{[-1, 1].map((direction, i) => <button key={direction} aria-label={`${axis === 'steer' ? 'Steer' : 'Altitude'} ${axis === 'steer' ? i ? 'right' : 'left' : i ? 'up' : 'down'}`} onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); controls.current[axis] = direction; }} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={release}>{i ? positive : negative}</button>)}</div></div>;
+}
