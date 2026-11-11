@@ -28,7 +28,7 @@ export function bluetoothError(error: unknown): string {
   }
 }
 export class BluetoothBike extends BaseAdapter {
-  resistanceFormat: ResistanceFormat = 'gss2026';
+  resistanceFormat: ResistanceFormat = getSavedBike()?.resistanceFormat ?? 'auto';
   entries: DiagnosticEntry[] = [];
   characteristics: CharacteristicInfo[] = [];
   private started = Date.now();
@@ -45,6 +45,12 @@ export class BluetoothBike extends BaseAdapter {
     this.onDiagnostics?.();
   }
   getSavedBike = getSavedBike;
+  setResistanceFormat(format: ResistanceFormat) {
+    this.resistanceFormat = format; this.trackers.clear();
+    const saved = getSavedBike(); if (saved) saveBike({ ...saved, resistanceFormat: format });
+    this.emit({ ...this.state, sample: { timestamp: 0 }, dataWarning: undefined, notice: 'Parser updated. Waiting for a fresh measurement.' });
+    this.log({ kind: 'parser-config', message: `FTMS resistance layout changed to ${format}. No device writes.` });
+  }
   forgetSavedBike() { forgetBike(); this.preferredDevice = undefined; this.onDiagnostics?.(); }
   async connect(extraServices: string[] = [], pickerOnly = false, reconnectSaved = false) {
     if (!window.isSecureContext) { this.fail('Bluetooth requires HTTPS (or localhost for desktop development).'); return; }
@@ -149,7 +155,11 @@ export class BluetoothBike extends BaseAdapter {
         this.emit({ status: 'connected', sample });
       }
       this.log({ kind: 'measurement', service: c.service.uuid, characteristic: c.uuid, hex: hex(view), values, message: values ? undefined : 'Unknown format: raw bytes only. No protocol assumptions.' });
-    } catch (e) { this.log({ kind: 'parse-error', characteristic: c.uuid, hex: hex(view), message: e instanceof Error ? e.message : 'Invalid standard measurement' }); }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Invalid standard measurement';
+      this.emit({ ...this.state, sample: { timestamp: 0 }, dataWarning: message });
+      this.log({ kind: 'parse-error', characteristic: c.uuid, hex: hex(view), message });
+    }
   }
   async subscribeCharacteristic(key: string) {
     const c = this.active.get(key), info = this.characteristics.find(i => i.key === key);

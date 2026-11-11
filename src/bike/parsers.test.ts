@@ -6,7 +6,7 @@ describe('standard Bluetooth measurements', () => {
     expect(parseIndoorBike(bytes(0x44, 0, 0xc4, 9, 131, 0, 0xec, 0xff))).toMatchObject({ speedKph: 25, cadence: 65.5, watts: -20 });
   });
   it('handles More Data (no instantaneous speed) and every optional FTMS field', () => {
-    const view = new DataView(new ArrayBuffer(32)); view.setUint16(0, 0x1fff, true);
+    const view = new DataView(new ArrayBuffer(27)); view.setUint16(0, 0x1fff, true);
     expect(parseIndoorBike(view)).toMatchObject({ flags: 8191, averageSpeedKph: 0, cadence: 0, remainingSeconds: 0 });
     expect(parseIndoorBike(bytes(1, 0))).toEqual({ flags: 1 });
   });
@@ -15,6 +15,17 @@ describe('standard Bluetooth measurements', () => {
   });
   it('supports an explicitly selected legacy two-byte resistance layout', () => {
     expect(parseIndoorBike(bytes(0x61, 0, 0xfe, 0xff, 100, 0), 'legacy-ftms')).toMatchObject({ resistance: -2, watts: 100 });
+  });
+  it('prevents the 21 W to 5376 W byte-shift regression and auto-detects exact standard layouts', () => {
+    // Synthetic standard fixture, not a captured Yesoul packet.
+    const legacy = bytes(0x64, 0, 0, 0, 98, 0, 10, 0, 21, 0);
+    expect(() => parseIndoorBike(legacy, 'gss2026')).toThrow('layout mismatch');
+    expect(parseIndoorBike(legacy)).toMatchObject({ cadence: 49, watts: 21, resistance: 10, resistanceBytes: 2 });
+    expect(parseIndoorBike(bytes(0x64, 0, 0, 0, 98, 0, 10, 21, 0))).toMatchObject({ cadence: 49, watts: 21, resistanceBytes: 1 });
+  });
+  it('rejects trailing bytes and unknown flags instead of guessing a watt multiplier', () => {
+    expect(() => parseIndoorBike(bytes(0x44, 0, 0, 0, 98, 0, 21, 0, 99))).toThrow('Unexpected');
+    expect(() => parseIndoorBike(bytes(0, 0x80, 0, 0))).toThrow('reserved');
   });
   it('decodes CPS optional fields before crank and signed power', () => {
     expect(parsePower(bytes(0x35, 0, 0xff, 0xff, 100, 64, 0, 3, 0, 0, 0, 0, 8, 12, 0, 0, 4))).toMatchObject({ watts: -1, pedalBalance: 50, accumulatedTorque: 2, crankRevolutions: 12, crankEventTime: 1024 });

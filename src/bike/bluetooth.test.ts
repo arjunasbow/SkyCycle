@@ -115,5 +115,18 @@ describe('read-only Bluetooth lifecycle', () => {
     const bike = new BluetoothBike(); await bike.connect(); expect(bike.getState().status).toBe('connected');
     expect(bike.getSavedBike()).toBeUndefined();
   });
+  it('rejects a misaligned FTMS power packet, clears flight data and saves a live layout correction', async () => {
+    const f = fixture(), bike = new BluetoothBike(); bike.resistanceFormat = 'gss2026'; await bike.connect();
+    f.characteristic.dispatchEvent(new Event('characteristicvaluechanged'));
+    expect(bike.getState().sample.watts).toBe(85);
+    f.characteristic.value = new DataView(Uint8Array.from([0x64, 0, 0, 0, 98, 0, 10, 0, 21, 0]).buffer);
+    f.characteristic.dispatchEvent(new Event('characteristicvaluechanged'));
+    expect(bike.getState().dataWarning).toContain('layout mismatch'); expect(bike.getState().sample.watts).toBeUndefined();
+    bike.setResistanceFormat('auto'); expect(bike.getSavedBike()?.resistanceFormat).toBe('auto');
+    f.characteristic.dispatchEvent(new Event('characteristicvaluechanged'));
+    expect(bike.getState().sample).toMatchObject({ cadence: 49, watts: 21 }); expect(bike.getState().dataWarning).toBeUndefined();
+    bike.disconnect(); await bike.connect([], false, true); expect(bike.resistanceFormat).toBe('auto');
+    expect(f.characteristic.writeValue).not.toHaveBeenCalled();
+  });
 });
 function bikeNameInExport(bike: BluetoothBike) { return /PRIVATE NAME|PRIVATE ID/.test(bike.exportLog()); }

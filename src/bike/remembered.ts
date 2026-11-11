@@ -8,7 +8,7 @@ export function getSavedBike(): SavedBike | undefined {
     if (!data || (typeof data.id !== 'string' && typeof data.name !== 'string')) return;
     return { id: typeof data.id === 'string' ? data.id : undefined, name: typeof data.name === 'string' ? data.name : undefined,
       extraServices: Array.isArray(data.extraServices) ? data.extraServices.filter((s: unknown) => typeof s === 'string' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(s)) : [],
-      resistanceFormat: data.resistanceFormat === 'legacy-ftms' ? 'legacy-ftms' : 'gss2026' };
+      resistanceFormat: data.resistanceFormat === 'legacy-ftms' ? 'legacy-ftms' : data.resistanceFormat === 'gss2026' ? 'gss2026' : 'auto' };
   } catch { return; }
 }
 export function saveBike(bike: SavedBike): boolean {
