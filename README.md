@@ -38,6 +38,14 @@ The default tab is the diagnostic workspace. The simulated adapter starts at 65 
 
 Discovery attempts `getPrimaryServices` and separately probes each explicitly requested service. Browser permissions, OS restrictions, blocklists and the device can all limit this inventory. A missing service is logged as unavailable, never proof that the device lacks it. All accessible characteristics and their read/notify/indicate properties appear. Known measurements subscribe automatically; unknown formats require an explicit Read or Listen action. Unknown bytes are not decoded as cadence or power. Device Information and Generic Access are intentionally not requested or read, to avoid identifiers.
 
+### If Bluefy never opens a device picker
+
+Use the trusted HTTPS app URL in Bluefy itself. In iPhone Settings, check **Privacy & Security → Bluetooth → Bluefy** if listed. Failure before a picker appears does not establish a proprietary bike lock: no device has been selected or connected at that point. Also test without the mirroring cable to isolate the setup, without assuming the cable is responsible.
+
+Connection troubleshooting shows HTTPS/API availability and the label **BLE diagnostics v2**. Tap **Test device picker only** to request selection with no optional services and no GATT connection. A successful selection confirms only the picker path; use the normal Connect button afterward for measurement discovery. Both requests run directly from a click, without a preceding asynchronous permission/availability check. Full standard UUID strings are used for optional services to avoid dependence on short-number normalization in native bridges. This is a defensive interoperability change, not a verified Bluefy fix. If the picker-only request fails too, the problem is earlier than service discovery; if it works and normal Connect fails before selection, compare request-option support.
+
+Errors now identify device selection vs GATT connection vs discovery/subscription and show native error names/messages **locally**. Some browser bridges reject with strings or plain objects; these are handled without losing the error detail. Local browser error text can contain private information, so it is never included in downloadable JSON. Report the failing stage and reviewed error text; do not share device identifiers. The picker-only test never asks the bike to change state or send data.
+
 Supported parsing:
 
 - Indoor Bike Data `2AD2`: inverted More Data bit, all optional fields, signed power, half-RPM cadence and little-endian fields.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BluetoothBike } from './bluetooth';
+import { BluetoothBike, bluetoothError, localBluetoothErrorDetail } from './bluetooth';
 function fixture() {
   const characteristic = Object.assign(new EventTarget(), {
     uuid: '00002ad2-0000-1000-8000-00805f9b34fb', service: { uuid: '00001826-0000-1000-8000-00805f9b34fb' },
@@ -19,7 +19,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe('read-only Bluetooth lifecycle', () => {
   it('probes explicit services when enumeration fails, subscribes and resets on disconnect', async () => {
     const f = fixture(), bike = new BluetoothBike(); await bike.connect();
-    expect(f.requestDevice).toHaveBeenCalledWith(expect.objectContaining({ acceptAllDevices: true, optionalServices: expect.arrayContaining([0x1826, 0x1818, 0x1816]) }));
+    expect(f.requestDevice).toHaveBeenCalledWith(expect.objectContaining({ acceptAllDevices: true, optionalServices: expect.arrayContaining(['00001826-0000-1000-8000-00805f9b34fb', '00001818-0000-1000-8000-00805f9b34fb', '00001816-0000-1000-8000-00805f9b34fb']) }));
     expect(bike.characteristics).toHaveLength(1); expect(f.characteristic.startNotifications).toHaveBeenCalledOnce();
     f.characteristic.dispatchEvent(new Event('characteristicvaluechanged'));
     expect(bike.getState().sample).toMatchObject({ cadence: 65, watts: 85 });
@@ -50,5 +50,31 @@ describe('read-only Bluetooth lifecycle', () => {
     // Exercise the event sink without Bluetooth hardware.
     for (let i = 0; i < 900; i++) (bike as unknown as { log(e: object): void }).log({ kind: 'status' });
     expect(bike.entries).toHaveLength(800);
+  });
+  it('preserves bridge string errors locally and identifies failure before device selection', async () => {
+    const f = fixture(); f.requestDevice.mockRejectedValue('Native bridge failed PRIVATE DATA');
+    const bike = new BluetoothBike(); await bike.connect();
+    expect(bike.getState().error).toContain('device selection (before GATT connection)');
+    expect(bike.getState().errorDetail).toBe('Native bridge failed PRIVATE DATA');
+    expect(bike.exportLog()).not.toContain('PRIVATE DATA');
+    expect(f.server.connect).not.toHaveBeenCalled();
+  });
+  it('recognizes plain-object browser errors and distinguishes GATT failure', async () => {
+    const f = fixture(); f.server.connect.mockRejectedValue({ name: 'NetworkError', message: 'Native connection error SECRET' });
+    const bike = new BluetoothBike(); await bike.connect();
+    expect(bike.getState().error).toContain('GATT connection (after device selection)');
+    expect(bike.getState().error).toContain('connection lost');
+    expect(bike.getState().errorDetail).toContain('SECRET');
+    expect(bike.exportLog()).not.toContain('SECRET');
+    expect(bluetoothError({ name: 'NotAllowedError' })).toContain('permission denied');
+    expect(localBluetoothErrorDetail(undefined)).toContain('no error details');
+  });
+  it('offers a picker-only test without optional services, GATT or device identifiers', async () => {
+    const f = fixture(), bike = new BluetoothBike(); await bike.connect([], true);
+    expect(f.requestDevice).toHaveBeenCalledWith({ acceptAllDevices: true });
+    expect(f.server.connect).not.toHaveBeenCalled();
+    expect(bike.getState().notice).toContain('Picker test succeeded');
+    expect(bike.getState().status).toBe('disconnected');
+    expect(bike.exportLog()).not.toMatch(/PRIVATE NAME|PRIVATE ID/);
   });
 });

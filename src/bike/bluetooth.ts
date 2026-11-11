@@ -3,15 +3,26 @@ import { CadenceTracker, hex, parseMeasurement, shortUUID, type Measurement, typ
 
 export const SERVICES = [0x1826, 0x1818, 0x1816, 0x180d, 0x180f];
 const KNOWN = new Set(['2ad2', '2a63', '2a5b', '2a37', '2a19']);
-export interface DiagnosticEntry { elapsedMs: number; kind: string; service?: string; characteristic?: string; hex?: string; values?: Measurement; message?: string; }
+export interface DiagnosticEntry { elapsedMs: number; kind: string; service?: string; characteristic?: string; hex?: string; values?: Measurement; message?: string; browserDetail?: string; }
 export interface CharacteristicInfo { key: string; service: string; uuid: string; read: boolean; notify: boolean; indicate: boolean; subscribed: boolean; standard: boolean; }
+function errorFields(error: unknown) {
+  // Native browser bridges may reject with strings or plain objects, not JS Errors.
+  const object = error && typeof error === 'object' ? error as { name?: unknown; message?: unknown } : undefined;
+  return { name: typeof object?.name === 'string' ? object.name : '', message: typeof error === 'string' ? error : typeof object?.message === 'string' ? object.message : '' };
+}
+export function localBluetoothErrorDetail(error: unknown): string {
+  const { name, message } = errorFields(error);
+  return ([name, message].filter(Boolean).join(': ') || 'Browser supplied no error details.').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600);
+}
 export function bluetoothError(error: unknown): string {
-  const name = error instanceof Error ? error.name : '';
+  const { name } = errorFields(error);
   switch (name) {
     case 'NotFoundError': return 'Device selection cancelled, or the requested service is unavailable.';
     case 'SecurityError': case 'NotAllowedError': return 'Bluetooth permission denied or service access blocked. Check browser and iOS permissions, HTTPS, and requested service UUIDs.';
     case 'NetworkError': return 'Bluetooth connection lost or GATT operation failed. Wake the bike, close other bike apps, and reconnect.';
     case 'NotSupportedError': return 'This Bluetooth operation is unsupported by the browser or device.';
+    case 'TypeError': return 'Bluetooth request rejected as an invalid or unsupported API call. Check the local browser detail and try the picker-only test.';
+    case 'InvalidStateError': return 'Bluetooth is not ready, or this call is not allowed in the current browser state. Check Bluetooth access for Bluefy and retry from a fresh page.';
     default: return 'Bluetooth operation failed. Confirm browser support, permissions, and bike availability.';
   }
 }
@@ -31,34 +42,49 @@ export class BluetoothBike extends BaseAdapter {
     if (this.entries.length > 800) this.entries.shift();
     this.onDiagnostics?.();
   }
-  async connect(extraServices: string[] = []) {
+  async connect(extraServices: string[] = [], pickerOnly = false) {
     if (!window.isSecureContext) { this.fail('Bluetooth requires HTTPS (or localhost for desktop development).'); return; }
-    if (!navigator.bluetooth) { this.fail('Web Bluetooth is unavailable. On iPhone, open this HTTPS page in Bluefy; simulation remains available.'); return; }
+    if (!navigator.bluetooth || typeof navigator.bluetooth.requestDevice !== 'function') { this.fail('Web Bluetooth device selection is unavailable. On iPhone, open this HTTPS page in Bluefy; simulation remains available.'); return; }
     this.disconnect();
     const session = ++this.session;
     this.entries = []; this.started = Date.now();
     this.emit({ status: 'connecting', sample: { timestamp: 0 } });
+    let stage = 'device selection (before GATT connection)';
     try {
+      this.log({ kind: 'connection-stage', message: pickerOnly ? 'Requesting picker only; no optional services and no GATT connection.' : 'Requesting device picker with standard optional services as full UUID strings.' });
       // No awaits before requestDevice: invoked directly from the Connect click.
-      const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [...SERVICES, ...extraServices] });
+      // Full UUID strings avoid relying on short-number normalization in native bridges.
+      const device = await navigator.bluetooth.requestDevice(pickerOnly ? { acceptAllDevices: true } : {
+        acceptAllDevices: true,
+        optionalServices: [...SERVICES.map(id => `0000${id.toString(16)}-0000-1000-8000-00805f9b34fb`), ...extraServices],
+      });
       if (session !== this.session) return;
+      if (pickerOnly) {
+        const notice = 'Picker test succeeded: a device was selected. No GATT connection or data access was attempted. Use Connect Bluetooth bike for the full diagnostic connection.';
+        this.emit({ status: 'disconnected', sample: { timestamp: 0 }, notice });
+        this.log({ kind: 'picker-test', message: notice }); return;
+      }
+      stage = 'GATT connection (after device selection)';
+      this.log({ kind: 'connection-stage', message: 'Device selected. Starting GATT connection.' });
       this.device = device;
       device.addEventListener('gattserverdisconnected', this.onDisconnect);
       if (!device.gatt) throw new DOMException('No GATT', 'NotSupportedError');
       const server = await device.gatt.connect();
       if (session !== this.session) { device.gatt.disconnect(); return; }
       this.emit({ status: 'connected', sample: { timestamp: 0 } });
+      stage = 'service discovery';
       this.log({ kind: 'status', message: 'GATT connected. Device name and identifier intentionally omitted.' });
       this.log({ kind: 'parser-config', message: `FTMS resistance layout: ${this.resistanceFormat}. Verify against device documentation.` });
       const services = new Map<string, BluetoothRemoteGATTService>();
       try { for (const service of await server.getPrimaryServices()) services.set(service.uuid, service); }
-      catch { this.log({ kind: 'warning', message: 'Service enumeration unavailable; probing explicitly requested services.' }); }
+      catch (e) { this.log({ kind: 'warning', message: `Service enumeration unavailable; probing explicitly requested services. ${bluetoothError(e)}`, browserDetail: localBluetoothErrorDetail(e) }); }
       for (const id of [...SERVICES, ...extraServices]) {
         if (session !== this.session) return;
         try { const service = await server.getPrimaryService(id); services.set(service.uuid, service); }
-        catch (e) { this.log({ kind: 'unavailable', service: String(id), message: bluetoothError(e) }); }
+        catch (e) { this.log({ kind: 'unavailable', service: String(id), message: `Service discovery: ${bluetoothError(e)}`, browserDetail: localBluetoothErrorDetail(e) }); }
       }
       for (const service of services.values()) {
+        stage = 'characteristic discovery';
         if (session !== this.session) return;
         try {
           for (const c of await service.getCharacteristics()) {
@@ -72,14 +98,14 @@ export class BluetoothBike extends BaseAdapter {
               else if (p.read) await this.readCharacteristic(key);
             }
           }
-        } catch (e) { this.log({ kind: 'error', service: service.uuid, message: bluetoothError(e) }); }
+        } catch (e) { this.log({ kind: 'error', service: service.uuid, message: `Characteristic discovery: ${bluetoothError(e)}`, browserDetail: localBluetoothErrorDetail(e) }); }
       }
       this.log({ kind: 'status', message: 'Discovery finished. Only authorized, accessible services are shown; this is not a complete device inventory.' });
     } catch (e) {
-      if (session === this.session) { this.disconnect(); this.fail(bluetoothError(e)); }
+      if (session === this.session) { this.disconnect(); this.fail(`Failed at ${stage}. ${bluetoothError(e)}`, localBluetoothErrorDetail(e)); }
     }
   }
-  private fail(message: string) { this.emit({ status: 'error', sample: { timestamp: 0 }, error: message }); this.log({ kind: 'error', message }); }
+  private fail(message: string, browserDetail?: string) { this.emit({ status: 'error', sample: { timestamp: 0 }, error: message, errorDetail: browserDetail }); this.log({ kind: 'error', message, browserDetail }); }
   private consume(key: string, view: DataView) {
     const c = this.active.get(key); if (!c) return;
     let values: Measurement | undefined;
@@ -106,12 +132,12 @@ export class BluetoothBike extends BaseAdapter {
     const listener: EventListener = () => { if (c.value) this.consume(key, c.value); };
     c.addEventListener('characteristicvaluechanged', listener); this.handlers.set(key, listener);
     try { await c.startNotifications(); info.subscribed = true; this.onDiagnostics?.(); }
-    catch (e) { c.removeEventListener('characteristicvaluechanged', listener); this.handlers.delete(key); this.log({ kind: 'error', characteristic: c.uuid, message: bluetoothError(e) }); }
+    catch (e) { c.removeEventListener('characteristicvaluechanged', listener); this.handlers.delete(key); this.log({ kind: 'error', characteristic: c.uuid, message: `Notification subscription: ${bluetoothError(e)}`, browserDetail: localBluetoothErrorDetail(e) }); }
   }
   async readCharacteristic(key: string) {
     const c = this.active.get(key); if (!c) return;
     try { this.consume(key, await c.readValue()); }
-    catch (e) { this.log({ kind: 'error', characteristic: c.uuid, message: bluetoothError(e) }); }
+    catch (e) { this.log({ kind: 'error', characteristic: c.uuid, message: `Characteristic read: ${bluetoothError(e)}`, browserDetail: localBluetoothErrorDetail(e) }); }
   }
   private cleanup() {
     this.active.forEach((c, key) => { const fn = this.handlers.get(key); if (fn) c.removeEventListener('characteristicvaluechanged', fn); });
@@ -134,7 +160,7 @@ export class BluetoothBike extends BaseAdapter {
     const entries = this.entries.map(e => {
       const safe = ['2ad2', '2a63', '2a5b'].includes(shortUUID(e.characteristic ?? ''));
       const values = e.values ? Object.fromEntries(Object.entries(e.values).filter(([k]) => !k.toLowerCase().includes('heartrate'))) : undefined;
-      return { ...e, hex: undefined, values: safe ? values : undefined, message: e.kind === 'parse-error' ? 'Malformed standard measurement' : e.message };
+      return { ...e, hex: undefined, browserDetail: undefined, values: safe ? values : undefined, message: e.kind === 'parse-error' ? 'Malformed standard measurement' : e.message };
     });
     return JSON.stringify({ format: 'skycycle-diagnostics-v1', privacy: 'Relative timestamps. No device identifiers or raw payloads; vendor data and heart rate omitted.', entries }, null, 2);
   }

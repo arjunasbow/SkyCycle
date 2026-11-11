@@ -1,6 +1,6 @@
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'simulated' | 'error';
 export interface BikeSample { timestamp: number; cadence?: number; watts?: number; speedKph?: number; cadenceAt?: number; wattsAt?: number; }
-export interface BikeState { status: ConnectionStatus; sample: BikeSample; error?: string; }
+export interface BikeState { status: ConnectionStatus; sample: BikeSample; error?: string; errorDetail?: string; notice?: string; }
 /** Adapters own transport and parsing. Renderers only consume snapshots. No resistance control. */
 export interface BikeDataAdapter {
   connect(): Promise<void>;
