@@ -12,3 +12,22 @@ it('makes side balloons collectible and reuses one bounded hit-effect pool', () 
   world.update(1, 1, .9); expect(pools[0].visible).toBe(false);
   world.resetTargets(); expect(world.targetObjects[0].visible).toBe(true); world.dispose();
 });
+it('keeps the same collectible course in space, with bounded scenery and periodic comets', () => {
+  const valley = createWorld('low'), space = createWorld('low', 'space');
+  expect(space.targets).toEqual(valley.targets);
+  expect(space.scene.background).toEqual(new THREE.Color(0x06091e));
+  expect(space.scene.getObjectByName('starfield')).toBeInstanceOf(THREE.Points);
+  expect(space.scene.getObjectByName('background-asteroids')).toBeInstanceOf(THREE.InstancedMesh);
+  let planets = 0, galaxies = 0; space.scene.traverse(o => { if (o.name === 'planet') planets++; if (o.name === 'spiral-galaxy') galaxies++; });
+  expect(planets).toBe(4); expect(galaxies).toBe(3);
+  const comet = space.scene.getObjectByName('passing-comet')!;
+  const children = space.scene.children.length;
+  space.update(5, 1, .1); expect(comet.visible).toBe(true); const x = comet.position.x;
+  space.update(6, 1, .1); expect(comet.position.x).toBeLessThan(x);
+  space.update(20, 1, .1); expect(comet.visible).toBe(false);
+  space.update(40, 1, .1); expect(comet.visible).toBe(true);
+  expect(space.scene.children).toHaveLength(children);
+  space.celebrate(0); space.targets[0].hit = true; space.update(41, 1, .1); expect(space.targetObjects[0].visible).toBe(false);
+  space.resetTargets(); expect(space.targetObjects[0].visible).toBe(true);
+  valley.dispose(); space.dispose(); expect(space.scene.children).toHaveLength(0);
+});

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { BikeDataAdapter, BikeState } from '../bike/types';
 import { assistedSteering, clamp, collectTargets, courseEffortHint, DEFAULT_RIDE_SECONDS, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight, timedRideFinished, wrapCourse, type Calibration, type FlightControls } from './flight';
-import { createWorld, terrainHeight, type Quality } from './world';
+import { createWorld, terrainHeight, type Environment, type Quality } from './world';
 import './game.css';
 import { enterFlightFullscreen } from './display';
 import { HitAudio } from './hit-audio';
@@ -32,6 +32,8 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
     if (next) void audio.current.unlock().then(ready => { if (!ready) setAudioNotice('Sound is unavailable or blocked. Visual hit feedback remains active.'); });
   };
   const [quality, setQuality] = useState<Quality>('low');
+  const [environment, setEnvironment] = useState<Environment>(() => { try { return localStorage.getItem('skycycle.environment') === 'space' ? 'space' : 'valley'; } catch { return 'valley'; } });
+  const changeEnvironment = (next: Environment) => { changeStatus('ready'); setHitFeedback(undefined); setEnvironment(next); try { localStorage.setItem('skycycle.environment', next); } catch { /* Optional preference. */ } };
   const [assisted, setAssisted] = useState(() => { try { return localStorage.getItem('skycycle.steering') !== 'manual'; } catch { return true; } });
   const assistedRef = useRef(assisted);
   useEffect(() => { assistedRef.current = assisted; controls.current.steer = 0; try { localStorage.setItem('skycycle.steering', assisted ? 'assisted' : 'manual'); } catch { /* Optional preference. */ } }, [assisted]);
@@ -117,9 +119,9 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
     setError('');
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'low' ? 1 : quality === 'medium' ? 1.25 : 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
-    renderer.domElement.setAttribute('aria-label', 'Three-dimensional flying bicycle in a mountain valley');
+    renderer.domElement.setAttribute('aria-label', environment === 'space' ? 'Flying bicycle among planets and spiral galaxies' : 'Three-dimensional flying bicycle in a mountain valley');
     container.appendChild(renderer.domElement);
-    const world = createWorld(quality), camera = new THREE.PerspectiveCamera(60, 1, .3, 1700);
+    const world = createWorld(quality, environment), camera = new THREE.PerspectiveCamera(60, 1, .3, 1700);
     let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0, hitSequence = 0;
     const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3();
     const resetCamera = () => { camera.position.set(flight.x, flight.y + 8, flight.z + 18); look.set(flight.x, flight.y + 3, flight.z - 25); };
@@ -140,7 +142,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         accumulator += dt;
         while (accumulator >= 1 / 60) {
           const prev = { ...flight };
-          stepFlight(flight, { ...input, steer: assistedRef.current ? assistedSteering(flight, world.targets) : input.steer }, effort, 1 / 60, Math.max(4, terrainHeight(flight.x, flight.z) + 4));
+          stepFlight(flight, { ...input, steer: assistedRef.current ? assistedSteering(flight, world.targets) : input.steer }, effort, 1 / 60, environment === 'space' ? 4 : Math.max(4, terrainHeight(flight.x, flight.z) + 4));
           const gained = collectTargets(prev, flight, world.targets, hit => {
             world.celebrate(hit.index); audio.current.play(hit.target.kind);
             setHitFeedback({ sequence: ++hitSequence, points: hit.points, kind: hit.target.kind });
@@ -159,30 +161,30 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       renderer.render(world.scene, camera); frameCount++;
       if (timestamp - statTime > 500) {
         const next = world.targets.find(t => !t.bonus && !t.hit && t.z < flight.z);
-        setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: courseEffortHint(flight, next), target: next ? `${next.kind === 'ring' ? 'Ring' : 'Balloon'} · ${Math.round(Math.hypot(next.x - flight.x, next.y - flight.y, next.z - flight.z))} m · ${Math.round(next.y)} m altitude` : 'Follow the valley', direction: next ? next.x - flight.x > 15 ? '↗' : next.x - flight.x < -15 ? '↖' : next.y - flight.y > 8 ? '⇧' : next.y - flight.y < -8 ? '⇩' : '↑' : '↑' });
+        setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: courseEffortHint(flight, next), target: next ? `${next.kind === 'ring' ? 'Ring' : 'Balloon'} · ${Math.round(Math.hypot(next.x - flight.x, next.y - flight.y, next.z - flight.z))} m · ${Math.round(next.y)} m altitude` : environment === 'space' ? 'Follow the starlight' : 'Follow the valley', direction: next ? next.x - flight.x > 15 ? '↗' : next.x - flight.x < -15 ? '↖' : next.y - flight.y > 8 ? '⇧' : next.y - flight.y < -8 ? '⇩' : '↑' : '↑' });
         frameCount = 0; statTime = timestamp;
       }
     };
     frame = requestAnimationFrame(animate);
     return () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); world.dispose(); renderer.dispose(); renderer.domElement.remove(); engine.current = null; };
-  }, [quality]);
+  }, [quality, environment]);
   const launch = () => { engine.current?.reset(); changeStatus('running'); };
   const changeQuality = (next: Quality) => { changeStatus('ready'); setQuality(next); };
   const freshValue = (v: number | undefined, at: number | undefined) => v !== undefined && Date.now() - (at ?? state.sample.timestamp) < 3000 && ['simulated', 'connected'].includes(state.status) ? Math.round(v) : '—';
   const effortUnit = state.sample.watts === undefined && state.sample.cadence !== undefined ? 'RPM' : 'W';
   const suggestedEffort = Math.round((effortUnit === 'RPM' ? calibration.referenceCadence : calibration.referenceWatts) * stats.effortHint / calibration.gain);
   const awakeLabel = awake.kind === 'active' ? 'AWAKE' : awake.kind === 'off' ? 'AWAKE OFF' : awake.kind === 'requesting' ? 'WAKE REQUEST' : 'SLEEP POSSIBLE';
-  return <section ref={workspace} className={`flight-workspace ${immersive ? 'immersive' : ''}`}>
-    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary sound-toggle" aria-pressed={sound} onClick={toggleSound}>{sound ? 'Sound on' : 'Sound off'}</button><button className="secondary fullscreen-toggle" onClick={() => void toggleFullscreen()}>{immersive ? 'Exit full screen' : 'Full screen'}</button><button className="secondary steering-switch" aria-pressed={assisted} onClick={() => setAssisted(!assisted)}>{assisted ? 'Auto-steering on' : 'Manual steering'}</button><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
+  return <section ref={workspace} className={`flight-workspace ${immersive ? 'immersive' : ''} ${environment === 'space' ? 'space-theme' : ''}`}>
+    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary" onClick={() => changeEnvironment(environment === 'space' ? 'valley' : 'space')}>{environment === 'space' ? 'World: Space' : 'World: Valley'}</button><button className="secondary sound-toggle" aria-pressed={sound} onClick={toggleSound}>{sound ? 'Sound on' : 'Sound off'}</button><button className="secondary fullscreen-toggle" onClick={() => void toggleFullscreen()}>{immersive ? 'Exit full screen' : 'Full screen'}</button><button className="secondary steering-switch" aria-pressed={assisted} onClick={() => setAssisted(!assisted)}>{assisted ? 'Auto-steering on' : 'Manual steering'}</button><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
     <div className="flight-view"><div className="scene-host" ref={host}/>
-      <div className="flight-top"><span className="location-tag">↟ THE AMBER VALLEY <small title={`Commit ${BUILD_INFO.commit} | ${BUILD_INFO.builtAt}`}>{BUILD_INFO.label} | {BUILD_INFO.commit}</small></span><span className="flight-mode">{mode === 'scenic' ? '∞ SCENIC EXPLORATION' : `ARCADE · ${clock(Math.max(0, DEFAULT_RIDE_SECONDS - stats.elapsed))} LEFT`}</span></div>
+      <div className="flight-top"><span className="location-tag">{environment === 'space' ? '✦ THE STARLIGHT REACH' : '↟ THE AMBER VALLEY'} <small title={`Commit ${BUILD_INFO.commit} | ${BUILD_INFO.builtAt}`}>{BUILD_INFO.label} | {BUILD_INFO.commit}</small></span><span className="flight-mode">{mode === 'scenic' ? '∞ SCENIC EXPLORATION' : `ARCADE · ${clock(Math.max(0, DEFAULT_RIDE_SECONDS - stats.elapsed))} LEFT`}</span></div>
       <div className="flight-hud"><Hud value={Math.round(stats.speed)} unit="KM/H" label="SPEED"/><Hud value={Math.round(stats.altitude)} unit="M" label="ALTITUDE"/><Hud value={stats.score.toString().padStart(4, '0')} label="SCORE" pulse={stats.score}/><Hud value={clock(stats.elapsed)} label="FLIGHT TIME"/></div>
       {hitFeedback && status === 'running' && <div key={hitFeedback.sequence} className={`hit-feedback ${hitFeedback.kind}`} role="status" aria-live="polite"><strong>+{hitFeedback.points}</strong><span>{hitFeedback.kind === 'ring' ? 'RING CLEARED!' : 'BALLOON POPPED!'}</span></div>}
       {status === 'running' && <div className="target-guide"><b>{stats.direction}</b><span>{stats.target}<small>Aim {suggestedEffort} {effortUnit} | {stats.effortHint > 1.025 ? 'Gentle climb' : stats.effortHint < .975 ? 'Gentle dip - keep pedalling' : 'Steady cruise'}</small></span></div>}
       {state.dataWarning && status === 'running' && <div role="alert" className="flight-warning measurement-warning">Bike data rejected. Check the FTMS layout in Bike diagnostics. Thrust is fading.</div>}
       {state.status !== 'simulated' && state.status !== 'connected' && status === 'running' && <div className="flight-warning">Bike disconnected · thrust is fading <button onClick={simulate}>Use simulation</button></div>}
-      {(status !== 'running' || error) && <div className="flight-overlay"><div><div className="eyebrow">{status === 'finished' ? 'COURSE COMPLETE' : status === 'paused' ? 'TAKE A BREATHER' : 'YOUR LEGS. YOUR WINGS.'}</div><h2>{error ? 'The skies are on hold.' : status === 'finished' ? 'A ride above the ordinary.' : status === 'paused' ? 'The valley can wait.' : 'Pedal beyond the everyday.'}</h2><p>{error || (status === 'finished' ? `${stats.score} points · ${clock(stats.elapsed)} in the air. Ready for another adventure?` : status === 'paused' ? 'Your flight is paused. Resume when you’re ready.' : 'Follow the river, thread the golden rings, and find your own pace. A comfortable effort is all it takes.')}</p>
-        {status === 'ready' && <div className="mode-select"><button className={mode === 'scenic' ? 'active' : ''} onClick={() => setMode('scenic')}>∞ Scenic ride<small>No timer. Just open skies.</small></button><button className={mode === 'arcade' ? 'active' : ''} onClick={() => setMode('arcade')}>◷ Arcade course<small>Five minutes. Chase a score.</small></button></div>}
+      {(status !== 'running' || error) && <div className="flight-overlay"><div><div className="eyebrow">{status === 'finished' ? 'COURSE COMPLETE' : status === 'paused' ? 'TAKE A BREATHER' : 'YOUR LEGS. YOUR WINGS.'}</div><h2>{error ? 'The skies are on hold.' : status === 'finished' ? 'A ride above the ordinary.' : status === 'paused' ? environment === 'space' ? 'The stars can wait.' : 'The valley can wait.' : 'Pedal beyond the everyday.'}</h2><p>{error || (status === 'finished' ? `${stats.score} points · ${clock(stats.elapsed)} in the air. Ready for another adventure?` : status === 'paused' ? 'Your flight is paused. Resume when you’re ready.' : environment === 'space' ? 'Ride among spiral galaxies and ringed planets. Thread the golden rings and pop the floating balloons. The same comfortable effort powers your flight.' : 'Follow the river, thread the golden rings, and find your own pace. A comfortable effort is all it takes.')}</p>
+        {status === 'ready' && <div className="mode-select"><button className={mode === 'scenic' ? 'active' : ''} onClick={() => setMode('scenic')}>∞ Scenic ride<small>{environment === 'space' ? 'No timer. Just the stars.' : 'No timer. Just open skies.'}</small></button><button className={mode === 'arcade' ? 'active' : ''} onClick={() => setMode('arcade')}>◷ Arcade course<small>Five minutes. Chase a score.</small></button></div>}
         {!error && <button className="primary launch-button" onClick={() => status === 'paused' ? changeStatus('running') : launch()}>{status === 'paused' ? 'Resume flight' : status === 'finished' ? 'Fly again' : 'Let’s take flight'} <span>↗</span></button>}
         {state.status !== 'simulated' && state.status !== 'connected' && <button className="secondary" onClick={simulate}>Use simulated bike</button>}
         <small className="control-hint">{assisted ? 'Auto-steering follows the rings. Pedal to gain lift; ease off to descend.' : 'Hold the left or right edge to steer. Pedal for lift; ease off to descend.'}<br/>Touch controls inside the game view. Space to pause.</small>

@@ -1,5 +1,7 @@
 # SkyCycle
 
+Choose **World: Valley / World: Space** in the flight toolbar to switch between Amber Valley and Starlight Reach. Switching worlds returns to the launch screen and starts a fresh ride; your choice is saved on this browser. Space has procedural spiral galaxies, ringed planets and moons, background asteroids and a comet flyby every 35 seconds. These are decorative, with the same rings, collectible balloons, scoring, exercise calibration and five-minute/unlimited modes. Space deliberately retains the responsive arcade ascent/descent model rather than simulating orbital physics. Low quality uses a bounded star field and shared geometry without image downloads or postprocessing; actual frame rate still needs checking on your iPhone.
+
 An original pedal-powered flying-bicycle experiment for a Yesoul GM1 Plus, iPhone running Bluefy, and a 21.5-inch mirrored display. React + TypeScript + Vite. **Yesoul hardware, Bluefy, tilt and cable/display compatibility are unverified.** This repository contains software validation, not a hardware compatibility claim. No Namco assets or proprietary Yesoul protocol are included.
 
 ## Run and validate

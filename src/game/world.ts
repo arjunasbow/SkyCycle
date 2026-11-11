@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
+import { addSpaceScenery } from './space';
 export type Quality = 'low' | 'medium' | 'high';
+export type Environment = 'valley' | 'space';
 export const riverX = (z: number) => -105 + Math.sin(z * .0034) * 65;
 export function terrainHeight(x: number, z: number) {
   const d = Math.abs(x - riverX(z));
@@ -8,7 +10,7 @@ export function terrainHeight(x: number, z: number) {
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
 export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
-export function createWorld(quality: Quality): World {
+export function createWorld(quality: Quality, environment: Environment = 'valley'): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
   const sun = new THREE.DirectionalLight(0xffe6bd, 2.6); sun.position.set(-350, 600, 160); scene.add(sun);
@@ -18,6 +20,9 @@ export function createWorld(quality: Quality): World {
   const mesh = (geometry: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, sx = 1, sy = sx, sz = sx, parent: THREE.Object3D = scene) => {
     const m = new THREE.Mesh(geometry, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); parent.add(m); return m;
   };
+  // Scenery is independent of the bike, targets and flight model.
+  let animateScenery = (_time: number) => {};
+  if (environment === 'valley') {
   const terrain = new THREE.PlaneGeometry(1500, 3100, quality === 'low' ? 55 : 90, quality === 'low' ? 90 : 150); terrain.rotateX(-Math.PI / 2); terrain.translate(0, 0, -1200);
   const pos = terrain.getAttribute('position'); const vertexColors = [];
   for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), z = pos.getZ(i), h = terrainHeight(x, z); pos.setY(i, h); const c = new THREE.Color(colors.ground); c.offsetHSL(.015 * Math.sin(z), -.02, Math.sin(x * .03 + z * .02) * .025); vertexColors.push(c.r, c.g, c.b); }
@@ -27,6 +32,7 @@ export function createWorld(quality: Quality): World {
   for (let i = 0; i <= 160; i++) { const z = 350 - i * 20, x = riverX(z); waterVertices.push(x - 24, .15, z, x + 24, .15, z); if (i < 160) { const a = i * 2; indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); } }
   const water = new THREE.BufferGeometry(); water.setAttribute('position', new THREE.Float32BufferAttribute(waterVertices, 3)); water.setIndex(indices); water.computeVertexNormals();
   const waterMat = material(colors.water, { side: THREE.DoubleSide }); mesh(water, waterMat, 0, 0, 0);
+  animateScenery = time => { waterMat.color.setHSL(.48, .27, .53 + Math.sin(time * .5) * .008); };
   // Deterministic procedural artwork: no external asset downloads or textures.
   let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   const dummy = new THREE.Object3D();
@@ -59,6 +65,9 @@ export function createWorld(quality: Quality): World {
   }
   const clouds = new THREE.Group(); scene.add(clouds); const cloudMat = material(0xf5f0d9);
   for (let i = 0; i < 24; i++) { const x = (random() - .5) * 1700, y = 200 + random() * 130, z = 400 - random() * 3100; for (let j = 0; j < 3; j++) mesh(sphere, cloudMat, x + j * 20, y + (j === 1 ? 6 : 0), z, 28, 12 + random() * 9, 15); }
+  }
+  let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const space = environment === 'space' ? addSpaceScenery(scene, quality) : undefined;
   const targets = createCourse(), targetObjects: THREE.Object3D[] = [];
   const ringGeo = new THREE.TorusGeometry(6.5, .45, 6, quality === 'low' ? 24 : 40);
   for (let i = 0; i < targets.length; i++) {
@@ -117,7 +126,7 @@ export function createWorld(quality: Quality): World {
         for (let i = 0; i < burstPositions.length; i++) burstPositions[i] += burstVelocity[i] * dt;
         burstGeometry.getAttribute('position').needsUpdate = true;
       }
-      propeller.rotation.z += dt * (thrust * 38 + 1); wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); waterMat.color.setHSL(.48, .27, .53 + Math.sin(time * .5) * .008); },
+      propeller.rotation.z += dt * (thrust * 38 + 1); wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); space?.update(time); },
     dispose() { const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
   };
 }
