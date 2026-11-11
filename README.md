@@ -141,6 +141,10 @@ Push this repository to your GitHub account, then create a Pages project connect
 
 ### GitHub Pages
 
-Push this repository to GitHub. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The included `.github/workflows/pages.yml` builds/tests and deploys `dist` on a push to `main` or manual dispatch. The workflow requests only repository-read and Pages deployment permissions; GitHub may require enabling Actions/Pages and approving its deployment environment. The project URL will be `https://<owner>.github.io/<repository>/`. Bluetooth and tilt are always invoked on button clicks, including on the deployed site.
+Push this repository to GitHub. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The optional `.github/workflows/pages.yml` builds/tests and deploys `dist` only when manually dispatched from **Actions ? Deploy to GitHub Pages (manual) ? Run workflow**, after enabling Pages. It does not run on normal pushes because Cloudflare is the active deployment target. The workflow requests only repository-read and Pages deployment permissions; GitHub may require enabling Actions/Pages and approving its deployment environment. The project URL will be `https://<owner>.github.io/<repository>/`. Bluetooth and tilt are always invoked on button clicks, including on the deployed site.
 
 No remote existed when this workspace was initialized; local implementation does not imply that a GitHub repository has been created or published.
+
+### Automated checks versus deployment
+
+`.github/workflows/ci.yml` runs tests, the production build and a Cloudflare deployment dry run on pushes to `main` and pull requests. It needs only repository-read permission and does not deploy. Cloudflare's connected Git integration handles production publishing independently. The optional manual GitHub Pages workflow needs Pages enabled first; otherwise its configure-pages step returns a 404 even if tests and compilation pass. These are separate pipelines, so a GitHub Pages setup error is not evidence that the application failed to compile or that Cloudflare deployment failed.
