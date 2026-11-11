@@ -1,3 +1,4 @@
+import { BUILD_INFO } from './build-info';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { BluetoothBike } from './bike/bluetooth';
 import { SimulatedBike } from './bike/simulated';
@@ -34,7 +35,7 @@ export default function App() {
   const fresh = (at: number | undefined) => now - (at ?? sample.timestamp) < 3000 && ['connected', 'simulated'].includes(state.status);
   const value = (v: number | undefined, at?: number) => v !== undefined && fresh(at) ? Math.round(v) : '—';
   return <div className="app-shell">
-    <header className="topbar"><a className="brand" href="#"><span className="brand-mark">✳</span> SkyCycle<span className="lab">FLIGHT LAB</span></a><span className="edition">PEDAL POWERED. POSSIBILITY DRIVEN.</span><span className="version">PROTOTYPE 01 <i/></span></header>
+    <header className="topbar"><a className="brand" href="#"><span className="brand-mark">✳</span> SkyCycle<span className="lab">FLIGHT LAB</span></a><span className="edition">PEDAL POWERED. POSSIBILITY DRIVEN.</span><span className="version" title={`${BUILD_INFO.commit} | ${BUILD_INFO.builtAt}`}>{BUILD_INFO.label} <i/></span></header>
     <main>
       <div className="page-heading"><div><div className="eyebrow">A LITTLE EFFORT. A WHOLE NEW PERSPECTIVE.</div><h1>Your next ride is up.</h1><p>Connect your bike. Find your rhythm. Take to the skies.</p></div><span className="phase-tag">HARDWARE COMPATIBILITY UNVERIFIED</span></div>
       <nav className="tabs" aria-label="Workspace"><button className={tab === 'diagnostics' ? 'selected' : ''} onClick={() => setTab('diagnostics')}>01 <span>Bike diagnostics</span></button><button className={tab === 'flight' ? 'selected' : ''} onClick={() => setTab('flight')}>02 <span>Flight simulator</span></button><span className="tab-note">READ-ONLY BLUETOOTH · NO RESISTANCE CONTROL</span></nav>

@@ -19,7 +19,7 @@ export default {
     const response = new Response(asset.body, asset);
     response.headers.set('X-Content-Type-Options', 'nosniff');
     response.headers.set('Permissions-Policy', 'bluetooth=(self), screen-wake-lock=(self)');
-    if (isIndex) response.headers.set('Cache-Control', 'no-cache');
+    if (isIndex || url.pathname === '/build-info.json') response.headers.set('Cache-Control', 'no-cache');
     return response;
   },
 };

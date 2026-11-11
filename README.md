@@ -148,3 +148,9 @@ No remote existed when this workspace was initialized; local implementation does
 ### Automated checks versus deployment
 
 `.github/workflows/ci.yml` runs tests, the production build and a Cloudflare deployment dry run on pushes to `main` and pull requests. It needs only repository-read permission and does not deploy. Cloudflare's connected Git integration handles production publishing independently. The optional manual GitHub Pages workflow needs Pages enabled first; otherwise its configure-pages step returns a 404 even if tests and compilation pass. These are separate pipelines, so a GitHub Pages setup error is not evidence that the application failed to compile or that Cloudflare deployment failed.
+
+### Identifying the deployed build
+
+The header and full-screen flight view show **Prototype 1.1, 1.2, ...**, advancing with each new Git revision after the initial eleven commits. Flight settings also show the exact short commit and build time. Rebuilding the same revision keeps its prototype number but gives it a fresh build timestamp, so code versions are consistent across GitHub and Cloudflare. The production build emits the same metadata at **`/skycycle/build-info.json`**, served with no-cache. Build time is unique per build; no local certificate or account data is included.
+
+Shallow CI checkouts restore Git history before numbering so a fresh Cloudflare build does not reset to 1. If full history is unavailable, the visible label uses the commit instead of inventing a sequential number. A dashboard banner saying the project is disconnected from the Git account means the stored repo/branch alone is insufficient: reauthorize Cloudflare's GitHub app before expecting pushes to trigger builds.
