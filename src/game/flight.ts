@@ -41,6 +41,14 @@ export function stepFlight(s: FlightState, controls: FlightControls, effort: num
   s.elapsed += dt;
 }
 export interface Target { x: number; y: number; z: number; radius: number; hit: boolean; kind: 'ring' | 'balloon'; }
+/** Lateral-only assistance: leaves power, pitch, altitude and scoring to the rider. */
+export function assistedSteering(s: Pick<FlightState, 'x' | 'z' | 'heading' | 'bank'>, targets: Target[]): number {
+  const next = targets.find(t => !t.hit && t.z < s.z);
+  const dx = (next?.x ?? 0) - s.x;
+  const ahead = next ? Math.max(18, s.z - next.z) : 120;
+  const desiredHeading = clamp(Math.atan2(dx, ahead), -.9, .9);
+  return clamp((desiredHeading - s.heading) * 4 - s.bank * .9, -1, 1);
+}
 /** Segment/plane crossing prevents missed targets when a slow frame skips past a ring. */
 export function collectTargets(previous: Pick<FlightState, 'x' | 'y' | 'z'>, current: Pick<FlightState, 'x' | 'y' | 'z'>, targets: Target[]): number {
   let score = 0;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SimulatedBike } from '../bike/simulated';
 import { BaseAdapter, type BikeState } from '../bike/types';
-import { collectTargets, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight } from './flight';
+import { assistedSteering, collectTargets, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight } from './flight';
 class TestBike extends BaseAdapter { async connect() {} disconnect() { this.update({ status: 'disconnected', sample: { timestamp: 1000 } }); } update(s: BikeState) { this.emit(s); } }
 describe('flight bike input and physics', () => {
   it('maps comfortable power, supports cadence-only devices and caps excessive power', () => {
@@ -37,5 +37,12 @@ describe('flight bike input and physics', () => {
     expect(collectTargets({ x: 0, y: 20, z: 0 }, { x: 0, y: 20, z: -20 }, targets)).toBe(100);
     expect(collectTargets({ x: 0, y: 20, z: 0 }, { x: 0, y: 20, z: -20 }, targets)).toBe(0);
     targets[0].hit = false; expect(collectTargets({ x: 20, y: 20, z: 0 }, { x: 20, y: 20, z: -20 }, targets)).toBe(0);
+  });
+  it('assisted steering follows horizontal targets without changing pitch or auto-awarding scores', () => {
+    const s = initialFlight(), target = { x: 45, y: 150, z: -150, radius: 9.5, hit: false, kind: 'ring' as const };
+    expect(assistedSteering(s, [target])).toBeGreaterThan(0);
+    for (let i = 0; i < 1800 && s.z > target.z; i++) stepFlight(s, { steer: assistedSteering(s, [target]), pitch: 0 }, 1, 1 / 60);
+    expect(Math.abs(s.x - target.x)).toBeLessThan(5); expect(s.pitch).toBe(0); expect(target.hit).toBe(false);
+    expect(assistedSteering({ x: 40, z: 0, heading: 0, bank: 0 }, [])).toBeLessThan(0);
   });
 });

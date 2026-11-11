@@ -1,5 +1,6 @@
 import { BaseAdapter } from './types';
 import { CadenceTracker, hex, parseMeasurement, shortUUID, type Measurement, type ResistanceFormat } from './parsers';
+import { forgetBike, getSavedBike, saveBike } from './remembered';
 
 export const SERVICES = [0x1826, 0x1818, 0x1816, 0x180d, 0x180f];
 const KNOWN = new Set(['2ad2', '2a63', '2a5b', '2a37', '2a19']);
@@ -32,6 +33,7 @@ export class BluetoothBike extends BaseAdapter {
   characteristics: CharacteristicInfo[] = [];
   private started = Date.now();
   private device?: BluetoothDevice;
+  private preferredDevice?: BluetoothDevice;
   private session = 0;
   private active = new Map<string, BluetoothRemoteGATTCharacteristic>();
   private handlers = new Map<string, EventListener>();
@@ -42,7 +44,9 @@ export class BluetoothBike extends BaseAdapter {
     if (this.entries.length > 800) this.entries.shift();
     this.onDiagnostics?.();
   }
-  async connect(extraServices: string[] = [], pickerOnly = false) {
+  getSavedBike = getSavedBike;
+  forgetSavedBike() { forgetBike(); this.preferredDevice = undefined; this.onDiagnostics?.(); }
+  async connect(extraServices: string[] = [], pickerOnly = false, reconnectSaved = false) {
     if (!window.isSecureContext) { this.fail('Bluetooth requires HTTPS (or localhost for desktop development).'); return; }
     if (!navigator.bluetooth || typeof navigator.bluetooth.requestDevice !== 'function') { this.fail('Web Bluetooth device selection is unavailable. On iPhone, open this HTTPS page in Bluefy; simulation remains available.'); return; }
     this.disconnect();
@@ -51,13 +55,33 @@ export class BluetoothBike extends BaseAdapter {
     this.emit({ status: 'connecting', sample: { timestamp: 0 } });
     let stage = 'device selection (before GATT connection)';
     try {
+      const saved = reconnectSaved ? getSavedBike() : undefined;
+      if (reconnectSaved && !saved) { this.fail('No saved bike is available. Choose your bike once with Connect Bluetooth bike.'); return; }
+      if (saved) { extraServices = saved.extraServices; this.resistanceFormat = saved.resistanceFormat; }
       this.log({ kind: 'connection-stage', message: pickerOnly ? 'Requesting picker only; no optional services and no GATT connection.' : 'Requesting device picker with standard optional services as full UUID strings.' });
       // No awaits before requestDevice: invoked directly from the Connect click.
       // Full UUID strings avoid relying on short-number normalization in native bridges.
-      const device = await navigator.bluetooth.requestDevice(pickerOnly ? { acceptAllDevices: true } : {
-        acceptAllDevices: true,
-        optionalServices: [...SERVICES.map(id => `0000${id.toString(16)}-0000-1000-8000-00805f9b34fb`), ...extraServices],
-      });
+      const optionalServices = [...SERVICES.map(id => `0000${id.toString(16)}-0000-1000-8000-00805f9b34fb`), ...extraServices];
+      let selection: Promise<BluetoothDevice>;
+      if (saved && this.preferredDevice && (!saved.id || this.preferredDevice.id === saved.id)) {
+        this.log({ kind: 'reconnect', message: 'Reusing the saved device from this page session.' });
+        selection = Promise.resolve(this.preferredDevice);
+      } else if (saved?.id && typeof navigator.bluetooth.getDevices === 'function') {
+        stage = 'saved-device lookup';
+        this.log({ kind: 'reconnect', message: 'Looking up the saved bike among browser-authorized devices.' });
+        selection = navigator.bluetooth.getDevices().then(devices => {
+          const matching = devices.find(d => d.id === saved.id);
+          if (!matching) throw new DOMException('Saved bike is not authorized here. Use Choose another bike to grant access again.', 'NotFoundError');
+          return matching;
+        });
+      } else if (saved?.name) {
+        // Synchronous picker invocation preserves the user gesture on browsers without getDevices.
+        this.log({ kind: 'reconnect', message: 'Saved-device lookup unavailable. Opening a picker filtered to the saved bike name.' });
+        selection = navigator.bluetooth.requestDevice({ filters: [{ name: saved.name }], optionalServices });
+      } else if (saved) {
+        this.fail('This browser cannot retrieve the saved bike. Use Choose another bike to select it again.'); return;
+      } else selection = navigator.bluetooth.requestDevice(pickerOnly ? { acceptAllDevices: true } : { acceptAllDevices: true, optionalServices });
+      const device = await selection;
       if (session !== this.session) return;
       if (pickerOnly) {
         const notice = 'Picker test succeeded: a device was selected. No GATT connection or data access was attempted. Use Connect Bluetooth bike for the full diagnostic connection.';
@@ -71,7 +95,9 @@ export class BluetoothBike extends BaseAdapter {
       if (!device.gatt) throw new DOMException('No GATT', 'NotSupportedError');
       const server = await device.gatt.connect();
       if (session !== this.session) { device.gatt.disconnect(); return; }
-      this.emit({ status: 'connected', sample: { timestamp: 0 } });
+      this.preferredDevice = device;
+      const remembered = saveBike({ id: device.id, name: device.name, extraServices, resistanceFormat: this.resistanceFormat });
+      this.emit({ status: 'connected', sample: { timestamp: 0 }, notice: remembered ? 'Bike remembered on this browser. Use Reconnect saved bike next time.' : 'Bike connected. Browser storage is unavailable; the preference could not be saved.' });
       stage = 'service discovery';
       this.log({ kind: 'status', message: 'GATT connected. Device name and identifier intentionally omitted.' });
       this.log({ kind: 'parser-config', message: `FTMS resistance layout: ${this.resistanceFormat}. Verify against device documentation.` });

@@ -1,25 +1,47 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { BikeDataAdapter, BikeState } from '../bike/types';
-import { clamp, collectTargets, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight, type Calibration, type FlightControls } from './flight';
+import { assistedSteering, clamp, collectTargets, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight, type Calibration, type FlightControls } from './flight';
 import { createWorld, terrainHeight, type Quality } from './world';
 import './game.css';
+import { enterFlightFullscreen } from './display';
 type PlayStatus = 'ready' | 'running' | 'paused' | 'finished';
 type Mode = 'scenic' | 'arcade';
 interface Stats { speed: number; altitude: number; score: number; elapsed: number; fps: number; target: string; direction: string; }
 const clock = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
 export default function Game({ adapter, state, simulate }: { adapter: BikeDataAdapter; state: BikeState; simulate: () => void }) {
+  const workspace = useRef<HTMLElement>(null);
+  const [immersive, setImmersive] = useState(false), [displayMessage, setDisplayMessage] = useState('');
+  const nativeFullscreen = useRef(false);
   const host = useRef<HTMLDivElement>(null), engine = useRef<{ reset: () => void } | null>(null);
   const controls = useRef<FlightControls>({ steer: 0, pitch: 0 }), keys = useRef(new Set<string>());
   const [status, setStatus] = useState<PlayStatus>('ready'), statusRef = useRef<PlayStatus>('ready');
   const [mode, setMode] = useState<Mode>('scenic'), modeRef = useRef<Mode>('scenic');
   const [quality, setQuality] = useState<Quality>('low');
+  const [assisted, setAssisted] = useState(() => { try { return localStorage.getItem('skycycle.steering') !== 'manual'; } catch { return true; } });
+  const assistedRef = useRef(assisted);
+  useEffect(() => { assistedRef.current = assisted; controls.current.steer = 0; try { localStorage.setItem('skycycle.steering', assisted ? 'assisted' : 'manual'); } catch { /* Optional preference. */ } }, [assisted]);
   const [calibration, setCalibration] = useState<Calibration>(DEFAULT_CALIBRATION), calibrationRef = useRef(calibration);
   const [stats, setStats] = useState<Stats>({ speed: 0, altitude: 45, score: 0, elapsed: 0, fps: 0, target: 'First ring ahead', direction: '↑' });
   const [error, setError] = useState(''), [tilt, setTilt] = useState(false), [tiltMessage, setTiltMessage] = useState('');
   const [tiltSupported, setTiltSupported] = useState(false);
   const tiltValue = useRef<FlightControls>({ steer: 0, pitch: 0 }), tiltBaseline = useRef<{ x: number; y: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const toggleFullscreen = async () => {
+    if (immersive) { setImmersive(false); setDisplayMessage(''); if (document.fullscreenElement === workspace.current) { try { await document.exitFullscreen(); } catch { /* Page mode already exited. */ } } return; }
+    setImmersive(true);
+    if (workspace.current) { const native = await enterFlightFullscreen(workspace.current); nativeFullscreen.current = native; setDisplayMessage(native ? '' : 'Page expanded. Use Bluefy Full-screen mode to hide its browser bars; landscape gives a wider view.'); }
+  };
+  useEffect(() => {
+    document.body.classList.toggle('skycycle-immersive', immersive);
+    return () => { document.body.classList.remove('skycycle-immersive'); };
+  }, [immersive]);
+  useEffect(() => {
+    const changed = () => { if (nativeFullscreen.current && !document.fullscreenElement) { nativeFullscreen.current = false; setImmersive(false); } };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { setImmersive(false); setDisplayMessage(''); } };
+    document.addEventListener('fullscreenchange', changed); window.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('fullscreenchange', changed); window.removeEventListener('keydown', escape); };
+  }, []);
   const changeStatus = (next: PlayStatus) => { statusRef.current = next; setStatus(next); };
   useEffect(() => { calibrationRef.current = calibration; }, [calibration]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -28,9 +50,9 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
   useEffect(() => { const input = new FlightInputAdapter(adapter); source.current = input; return () => { input.dispose(); }; }, [adapter]);
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.matches('input,select,textarea,button,summary')) return;
+      if ((e.target as HTMLElement)?.matches('input,select,textarea,summary')) return;
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'a', 'd', 'w', 's', 'A', 'D', 'W', 'S', ' '].includes(e.key)) { e.preventDefault(); keys.current.add(e.key.toLowerCase()); }
-      if (e.key === ' ' && !e.repeat && (statusRef.current === 'running' || statusRef.current === 'paused')) changeStatus(statusRef.current === 'running' ? 'paused' : 'running');
+      if (e.key === ' ' && !e.repeat && (statusRef.current === 'running' || statusRef.current === 'paused')) { e.preventDefault(); changeStatus(statusRef.current === 'running' ? 'paused' : 'running'); }
     };
     const up = (e: KeyboardEvent) => { keys.current.delete(e.key.toLowerCase()); };
     const blur = () => { keys.current.clear(); controls.current = { steer: 0, pitch: 0 }; tiltValue.current = { steer: 0, pitch: 0 }; if (statusRef.current === 'running') changeStatus('paused'); };
@@ -95,7 +117,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         accumulator += dt;
         while (accumulator >= 1 / 60) {
           const prev = { x: flight.x, y: flight.y, z: flight.z };
-          stepFlight(flight, input, effort, 1 / 60, Math.max(4, terrainHeight(flight.x, flight.z) + 4));
+          stepFlight(flight, { ...input, steer: assistedRef.current ? assistedSteering(flight, world.targets) : input.steer }, effort, 1 / 60, Math.max(4, terrainHeight(flight.x, flight.z) + 4));
           score += collectTargets(prev, flight, world.targets); accumulator -= 1 / 60;
           if (modeRef.current === 'arcade' && (flight.elapsed >= 180 || flight.z < -2350)) { changeStatus('finished'); break; }
           if (flight.z < -2350) { flight.z = 110; flight.x = 0; flight.heading = 0; world.resetTargets(); resetCamera(); }
@@ -119,8 +141,8 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
   const launch = () => { engine.current?.reset(); changeStatus('running'); };
   const changeQuality = (next: Quality) => { changeStatus('ready'); setQuality(next); };
   const freshValue = (v: number | undefined, at: number | undefined) => v !== undefined && Date.now() - (at ?? state.sample.timestamp) < 3000 && ['simulated', 'connected'].includes(state.status) ? Math.round(v) : '—';
-  return <section className="flight-workspace">
-    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
+  return <section ref={workspace} className={`flight-workspace ${immersive ? 'immersive' : ''}`}>
+    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary fullscreen-toggle" onClick={() => void toggleFullscreen()}>{immersive ? 'Exit full screen' : 'Full screen'}</button><button className="secondary steering-switch" aria-pressed={assisted} onClick={() => setAssisted(!assisted)}>{assisted ? 'Auto-steering on' : 'Manual steering'}</button><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
     <div className="flight-view"><div className="scene-host" ref={host}/>
       <div className="flight-top"><span className="location-tag">↟ THE AMBER VALLEY <small>ORIGINAL WORLD 01</small></span><span className="flight-mode">{mode === 'scenic' ? '∞ SCENIC EXPLORATION' : `ARCADE · ${clock(Math.max(0, 180 - stats.elapsed))} LEFT`}</span></div>
       <div className="flight-hud"><Hud value={Math.round(stats.speed)} unit="KM/H" label="SPEED"/><Hud value={Math.round(stats.altitude)} unit="M" label="ALTITUDE"/><Hud value={stats.score.toString().padStart(4, '0')} label="SCORE"/><Hud value={clock(stats.elapsed)} label="FLIGHT TIME"/></div>
@@ -130,12 +152,14 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         {status === 'ready' && <div className="mode-select"><button className={mode === 'scenic' ? 'active' : ''} onClick={() => setMode('scenic')}>∞ Scenic ride<small>No timer. Just open skies.</small></button><button className={mode === 'arcade' ? 'active' : ''} onClick={() => setMode('arcade')}>◷ Arcade course<small>Three minutes. Chase a score.</small></button></div>}
         {!error && <button className="primary launch-button" onClick={() => status === 'paused' ? changeStatus('running') : launch()}>{status === 'paused' ? 'Resume flight' : status === 'finished' ? 'Fly again' : 'Let’s take flight'} <span>↗</span></button>}
         {state.status !== 'simulated' && state.status !== 'connected' && <button className="secondary" onClick={simulate}>Use simulated bike</button>}
-        <small className="control-hint">← → steer · ↑ ↓ climb / descend · Space to pause<br/>On iPhone, use the touch pads below. No Bluetooth required.</small>
+        <small className="control-hint">{assisted ? 'Auto-steering follows the rings. Pedal to gain lift; ease off to descend.' : 'Use left/right to steer and up/down to change altitude.'}<br/>Touch controls inside the game view. Space to pause.</small>
       </div></div>}
+      {status === 'running' && <div className="scene-inputs">{!assisted && <TouchPad controls={controls} axis="steer" negative="←" positive="→" label="STEER"/>}<TouchPad controls={controls} axis="pitch" negative="↓" positive="↑" label="DESCEND / CLIMB"/></div>}
+      {displayMessage && <div role="status" className="display-message">{displayMessage}<button aria-label="Dismiss full-screen tip" onClick={() => setDisplayMessage('')}>Close</button></div>}
       <div className="flight-bottom"><div><span className="source-dot"/>{state.status === 'simulated' ? 'SIMULATED BIKE' : state.status === 'connected' ? 'BLUETOOTH BIKE' : 'NO BIKE DATA'} <b>{freshValue(state.sample.cadence, state.sample.cadenceAt)} <small>RPM</small></b><b>{freshValue(state.sample.watts, state.sample.wattsAt)} <small>W</small></b></div><span>{stats.fps} FPS · {quality.toUpperCase()}</span></div>
     </div>
-    <div className="flight-controls"><TouchPad controls={controls} axis="steer" negative="←" positive="→" label="STEERING"/><div className="flight-tip"><strong>Find your rhythm. The lift will follow.</strong><p>Pedal to build speed. Climb with gentle inputs. Ease off to glide down.</p></div><TouchPad controls={controls} axis="pitch" negative="↓" positive="↑" label="ALTITUDE"/></div>
-    {showSettings && <div className="panel flight-settings"><div className="panel-heading"><h3>Make the flight yours.</h3><button className="text-button" onClick={() => setShowSettings(false)}>Close settings</button></div><p className="muted">Choose a comfortable reference effort. Changes affect virtual thrust only. Adjusting quality restarts the flight. Bluetooth setup and simulation RPM/watts are on the diagnostics tab.</p><div className="settings-grid"><label>Comfortable power <strong>{calibration.referenceWatts} W</strong><input type="range" min="30" max="200" step="5" value={calibration.referenceWatts} onChange={e => setCalibration({ ...calibration, referenceWatts: +e.target.value })}/></label><label>Cadence-only reference <strong>{calibration.referenceCadence} RPM</strong><input type="range" min="30" max="100" value={calibration.referenceCadence} onChange={e => setCalibration({ ...calibration, referenceCadence: +e.target.value })}/></label><label>Thrust gain <strong>{calibration.gain.toFixed(2)}×</strong><input type="range" min=".5" max="1.5" step=".05" value={calibration.gain} onChange={e => setCalibration({ ...calibration, gain: +e.target.value })}/></label><label>Visual quality<select value={quality} onChange={e => changeQuality(e.target.value as Quality)}><option value="low">Low · iPhone default</option><option value="medium">Medium</option><option value="high">High · desktop</option></select></label></div><div className="tilt-row"><button className="secondary" disabled={!tiltSupported} onClick={enableTilt}>{tilt ? 'Disable tilt controls' : 'Enable optional tilt'}</button>{tilt && <button className="secondary" onClick={() => { tiltBaseline.current = null; }}>Recenter tilt</button>}<button className="secondary" onClick={simulate}>Switch to simulated bike</button><button className="secondary" onClick={() => { engine.current?.reset(); changeStatus('ready'); }}>Reset flight</button></div>{tiltMessage && <p role="status" className="muted">{tiltMessage}</p>}<p className="muted">With measured watts, power drives thrust. Cadence-only devices use RPM. If reported cadence stops or becomes stale, thrust decays even when power remains. Power-only devices rely on power freshness. Physics is an arcade approximation, not a training or aerodynamic model.</p></div>}
+    <div className="flight-controls external-controls">{assisted ? <div className="assisted-note"><strong>Auto-steering</strong><small>Follow the course hands-free.</small></div> : <TouchPad controls={controls} axis="steer" negative="←" positive="→" label="STEERING"/>}<div className="flight-tip"><strong>Find your rhythm. The lift will follow.</strong><p>Pedal to build speed. Climb with gentle inputs. Ease off to glide down.</p></div><TouchPad controls={controls} axis="pitch" negative="↓" positive="↑" label="ALTITUDE"/></div>
+    {showSettings && <div className="panel flight-settings"><div className="panel-heading"><h3>Make the flight yours.</h3><button className="text-button" onClick={() => setShowSettings(false)}>Close settings</button></div><p className="muted">Auto-steering guides left and right toward the next target; your effort controls lift, and altitude buttons or tilt add pitch. Switch to manual steering above to use touch arrows, tilt or a keyboard. Choose a comfortable reference effort. Changes affect virtual thrust only. Adjusting quality restarts the flight. Bluetooth setup and simulation RPM/watts are on the diagnostics tab.</p><div className="settings-grid"><label>Comfortable power <strong>{calibration.referenceWatts} W</strong><input type="range" min="30" max="200" step="5" value={calibration.referenceWatts} onChange={e => setCalibration({ ...calibration, referenceWatts: +e.target.value })}/></label><label>Cadence-only reference <strong>{calibration.referenceCadence} RPM</strong><input type="range" min="30" max="100" value={calibration.referenceCadence} onChange={e => setCalibration({ ...calibration, referenceCadence: +e.target.value })}/></label><label>Thrust gain <strong>{calibration.gain.toFixed(2)}×</strong><input type="range" min=".5" max="1.5" step=".05" value={calibration.gain} onChange={e => setCalibration({ ...calibration, gain: +e.target.value })}/></label><label>Visual quality<select value={quality} onChange={e => changeQuality(e.target.value as Quality)}><option value="low">Low · iPhone default</option><option value="medium">Medium</option><option value="high">High · desktop</option></select></label></div><div className="tilt-row"><button className="secondary" disabled={!tiltSupported} onClick={enableTilt}>{tilt ? 'Disable tilt controls' : 'Enable optional tilt'}</button>{tilt && <button className="secondary" onClick={() => { tiltBaseline.current = null; }}>Recenter tilt</button>}<button className="secondary" onClick={simulate}>Switch to simulated bike</button><button className="secondary" onClick={() => { engine.current?.reset(); changeStatus('ready'); }}>Reset flight</button></div>{tiltMessage && <p role="status" className="muted">{tiltMessage}</p>}<p className="muted">With measured watts, power drives thrust. Cadence-only devices use RPM. If reported cadence stops or becomes stale, thrust decays even when power remains. Power-only devices rely on power freshness. Physics is an arcade approximation, not a training or aerodynamic model.</p></div>}
   </section>;
 }
 function Hud({ value, unit, label }: { value: string | number; unit?: string; label: string }) { return <div><span>{label}</span><strong>{value}<small>{unit}</small></strong></div>; }

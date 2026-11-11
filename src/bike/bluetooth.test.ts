@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BluetoothBike, bluetoothError, localBluetoothErrorDetail } from './bluetooth';
 function fixture() {
+  const storage = new Map<string, string>();
+  vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
   const characteristic = Object.assign(new EventTarget(), {
     uuid: '00002ad2-0000-1000-8000-00805f9b34fb', service: { uuid: '00001826-0000-1000-8000-00805f9b34fb' },
     properties: { read: false, notify: true, indicate: false },
@@ -76,5 +78,42 @@ describe('read-only Bluetooth lifecycle', () => {
     expect(bike.getState().notice).toContain('Picker test succeeded');
     expect(bike.getState().status).toBe('disconnected');
     expect(bike.exportLog()).not.toMatch(/PRIVATE NAME|PRIVATE ID/);
+    expect(bike.getSavedBike()).toBeUndefined();
+  });
+  it('remembers a successful bike locally and reconnects in-session without another picker', async () => {
+    const f = fixture(), bike = new BluetoothBike(); await bike.connect();
+    expect(bike.getSavedBike()).toMatchObject({ id: 'PRIVATE ID', name: 'PRIVATE NAME' });
+    bike.disconnect(); await bike.connect([], false, true);
+    expect(f.requestDevice).toHaveBeenCalledOnce(); expect(f.server.connect).toHaveBeenCalledTimes(2);
+    expect(bike.exportLog()).not.toMatch(/PRIVATE NAME|PRIVATE ID/);
+    bike.forgetSavedBike(); expect(bike.getSavedBike()).toBeUndefined();
+  });
+  it('retrieves only the exact saved device after reload, even among several devices', async () => {
+    const f = fixture(); const first = new BluetoothBike(); await first.connect(); first.disconnect();
+    const getDevices = vi.fn().mockResolvedValue([{ id: 'OTHER ID' }, f.device]);
+    Object.assign(navigator.bluetooth, { getDevices });
+    const reloaded = new BluetoothBike(); await reloaded.connect([], false, true);
+    expect(getDevices).toHaveBeenCalledOnce(); expect(f.requestDevice).toHaveBeenCalledOnce();
+    expect(reloaded.getState().status).toBe('connected');
+  });
+  it('falls back to a name-filtered picker when saved-device retrieval is unavailable', async () => {
+    const f = fixture(), first = new BluetoothBike(); await first.connect(); first.disconnect();
+    const reloaded = new BluetoothBike(); await reloaded.connect([], false, true);
+    expect(f.requestDevice).toHaveBeenLastCalledWith(expect.objectContaining({ filters: [{ name: 'PRIVATE NAME' }] }));
+    expect(bikeNameInExport(reloaded)).toBe(false);
+  });
+  it('does not silently choose another authorized device or launch a picker after an async lookup', async () => {
+    const f = fixture(), first = new BluetoothBike(); await first.connect(); first.disconnect();
+    Object.assign(navigator.bluetooth, { getDevices: vi.fn().mockResolvedValue([{ id: 'OTHER ID' }]) });
+    const reloaded = new BluetoothBike(); await reloaded.connect([], false, true);
+    expect(f.requestDevice).toHaveBeenCalledOnce();
+    expect(reloaded.getState().error).toContain('saved-device lookup');
+    expect(reloaded.getState().errorDetail).toContain('Choose another bike');
+  });
+  it('keeps connection usable when browser storage is disabled', async () => {
+    fixture(); vi.stubGlobal('localStorage', { getItem: () => { throw new Error('disabled'); }, setItem: () => { throw new Error('disabled'); } });
+    const bike = new BluetoothBike(); await bike.connect(); expect(bike.getState().status).toBe('connected');
+    expect(bike.getSavedBike()).toBeUndefined();
   });
 });
+function bikeNameInExport(bike: BluetoothBike) { return /PRIVATE NAME|PRIVATE ID/.test(bike.exportLog()); }
