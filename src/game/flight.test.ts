@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { SimulatedBike } from '../bike/simulated';
 import { BaseAdapter, type BikeState } from '../bike/types';
-import { assistedSteering, collectTargets, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight } from './flight';
+import { assistedSteering, collectTargets, courseEffortHint, createCourse, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight } from './flight';
 class TestBike extends BaseAdapter { async connect() {} disconnect() { this.update({ status: 'disconnected', sample: { timestamp: 1000 } }); } update(s: BikeState) { this.emit(s); } }
 describe('flight bike input and physics', () => {
   it('maps comfortable power, supports cadence-only devices and caps excessive power', () => {
     const bike = new TestBike(), input = new FlightInputAdapter(bike);
-    bike.update({ status: 'connected', sample: { timestamp: 1000, watts: 80, cadence: 60 } }); expect(input.effort(1500, DEFAULT_CALIBRATION)).toBe(1);
-    bike.update({ status: 'connected', sample: { timestamp: 1000, cadence: 60 } }); expect(input.effort(1500, DEFAULT_CALIBRATION)).toBe(1);
+    bike.update({ status: 'connected', sample: { timestamp: 1000, watts: 45, cadence: 80 } }); expect(input.effort(1500, DEFAULT_CALIBRATION)).toBe(1);
+    bike.update({ status: 'connected', sample: { timestamp: 1000, cadence: 80 } }); expect(input.effort(1500, DEFAULT_CALIBRATION)).toBe(1);
     bike.update({ status: 'connected', sample: { timestamp: 1000, watts: 900 } }); expect(input.effort(1500, DEFAULT_CALIBRATION)).toBe(1.5); input.dispose();
   });
   it('rejects stale per-field cadence, stationary pedals, disconnected and invalid data', () => {
@@ -44,5 +44,28 @@ describe('flight bike input and physics', () => {
     for (let i = 0; i < 1800 && s.z > target.z; i++) stepFlight(s, { steer: assistedSteering(s, [target]), pitch: 0 }, 1, 1 / 60);
     expect(Math.abs(s.x - target.x)).toBeLessThan(5); expect(s.pitch).toBe(0); expect(target.hit).toBe(false);
     expect(assistedSteering({ x: 40, z: 0, heading: 0, bank: 0 }, [])).toBeLessThan(0);
+  });
+  it('holds altitude at 45 W and reverses a climb within one second at 40 W or stopped pedals', () => {
+    const s = { ...initialFlight(), speed: 21, thrust: 1 };
+    for (let i = 0; i < 600; i++) stepFlight(s, { steer: 0, pitch: 0 }, 1, 1 / 60);
+    expect(s.y).toBeCloseTo(45, 4);
+    for (let i = 0; i < 180; i++) stepFlight(s, { steer: 0, pitch: 0 }, 50 / 45, 1 / 60);
+    expect(s.verticalSpeed).toBeGreaterThan(.8);
+    const climbing = { ...s }, startY = s.y;
+    for (let i = 0; i < 60; i++) stepFlight(s, { steer: 0, pitch: 0 }, 40 / 45, 1 / 60);
+    expect(s.verticalSpeed).toBeLessThan(-.5); expect(s.y).toBeLessThan(startY + .2);
+    for (let i = 0; i < 60; i++) stepFlight(climbing, { steer: 0, pitch: 0 }, 0, 1 / 60);
+    expect(climbing.verticalSpeed).toBeLessThan(-2); expect(climbing.speed).toBeGreaterThan(15);
+  });
+  it('makes the entire course achievable with continuous modest effort around 45 W', () => {
+    const targets = createCourse(), s = initialFlight(); let score = 0, minWatts = 45, maxWatts = 45;
+    for (let i = 0; i < 60 * 150 && s.z > -2400; i++) {
+      const next = targets.find(t => !t.hit && t.z < s.z), effort = courseEffortHint(s, next), previous = { ...s };
+      minWatts = Math.min(minWatts, effort * 45); maxWatts = Math.max(maxWatts, effort * 45);
+      stepFlight(s, { steer: assistedSteering(s, targets), pitch: 0 }, effort, 1 / 60);
+      score += collectTargets(previous, s, targets);
+    }
+    expect(score).toBe(2600); expect(minWatts).toBeGreaterThan(35); expect(maxWatts).toBeLessThan(55);
+    expect(minWatts).toBeLessThan(43); expect(maxWatts).toBeGreaterThan(47);
   });
 });

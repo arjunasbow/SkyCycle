@@ -1,6 +1,6 @@
 import type { BikeDataAdapter, BikeState } from '../bike/types';
 export interface Calibration { referenceWatts: number; referenceCadence: number; gain: number; }
-export const DEFAULT_CALIBRATION: Calibration = { referenceWatts: 80, referenceCadence: 60, gain: 1 };
+export const DEFAULT_CALIBRATION: Calibration = { referenceWatts: 45, referenceCadence: 80, gain: 1 };
 export const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 export class FlightInputAdapter {
   private state: BikeState;
@@ -27,13 +27,17 @@ export function initialFlight(): FlightState { return { x: 0, y: 45, z: 110, hea
 export function stepFlight(s: FlightState, controls: FlightControls, effort: number, dt: number, floor = 4) {
   dt = clamp(dt, 0, 1 / 30);
   const smooth = (current: number, target: number, response: number) => current + (target - current) * (1 - Math.exp(-response * dt));
-  s.thrust = smooth(s.thrust, clamp(effort, 0, 1.5), effort ? 1.4 : .8);
+  // Effort reaches lift promptly, even while forward momentum is retained.
+  s.thrust = smooth(s.thrust, clamp(effort, 0, 1.5), effort < s.thrust ? 10 : 6);
   s.bank = smooth(s.bank, clamp(controls.steer, -1, 1) * .55, 4);
   s.pitch = smooth(s.pitch, clamp(controls.pitch, -1, 1) * .35, 3);
   s.heading = clamp(s.heading + s.bank * .8 * dt, -1.2, 1.2);
-  const gravity = 9.81, lift = Math.min(10, s.speed * .39) * Math.min(1, s.thrust + .12);
-  s.verticalSpeed = clamp(s.verticalSpeed + (lift - gravity * .75 + s.pitch * s.speed * .85 - s.verticalSpeed * 1.4) * dt, -5, 8);
-  s.speed = clamp(s.speed + (s.thrust * 8 - .009 * s.speed * s.speed - gravity * Math.sin(s.pitch) * .25) * dt, 0, 38);
+  const gravity = 9.81;
+  // At reference effort lift balances gravity. A modest effort change gives ~1 m/s
+  // climb/descent, without waiting for airspeed to bleed away or requiring coasting.
+  const lift = gravity * clamp(1 + (s.thrust - 1) * 2.4, 0, 2.2) * clamp(s.speed / 10, 0, 1);
+  s.verticalSpeed = clamp(s.verticalSpeed + (lift - gravity + s.pitch * s.speed * .65 - s.verticalSpeed * 2.8) * dt, -4, 5);
+  s.speed = clamp(s.speed + (s.thrust * 6 - .014 * s.speed * s.speed - gravity * Math.sin(s.pitch) * .25) * dt, 0, 30);
   s.x = clamp(s.x + Math.sin(s.heading) * s.speed * dt, -470, 470);
   s.z -= Math.cos(s.heading) * s.speed * dt;
   s.y = clamp(s.y + s.verticalSpeed * dt, floor, 200);
@@ -41,6 +45,17 @@ export function stepFlight(s: FlightState, controls: FlightControls, effort: num
   s.elapsed += dt;
 }
 export interface Target { x: number; y: number; z: number; radius: number; hit: boolean; kind: 'ring' | 'balloon'; }
+export const COURSE_END_Z = -2450;
+export function createCourse(): Target[] {
+  return Array.from({ length: 20 }, (_, i) => ({ x: Math.sin(i * .55) * 38, y: 45 + Math.sin(i * .55) * 10, z: -50 - i * 120, radius: 6, hit: false, kind: i % 5 === 4 ? 'balloon' : 'ring' }));
+}
+/** Advisory effort only: never applies thrust or vertical steering to the rider. */
+export function courseEffortHint(s: Pick<FlightState, 'y' | 'z' | 'speed' | 'heading'>, target?: Target): number {
+  if (!target) return 1;
+  const seconds = Math.max(2, (s.z - target.z) / Math.max(5, Math.cos(s.heading) * s.speed));
+  const desiredVerticalSpeed = clamp((target.y - s.y) / seconds, -1.4, 1.4);
+  return 1 + desiredVerticalSpeed * 2.8 / (9.81 * 2.4);
+}
 /** Lateral-only assistance: leaves power, pitch, altitude and scoring to the rider. */
 export function assistedSteering(s: Pick<FlightState, 'x' | 'z' | 'heading' | 'bank'>, targets: Target[]): number {
   const next = targets.find(t => !t.hit && t.z < s.z);

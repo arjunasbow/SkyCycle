@@ -11,7 +11,7 @@ export default function App() {
   const [adapter, setAdapter] = useState<BikeDataAdapter>(simulated);
   const [state, setState] = useState<BikeState>(simulated.getState());
   const [diagnostics, setDiagnostics] = useState({ entries: [...ble.entries], characteristics: [...ble.characteristics] });
-  const [rpm, setRPM] = useState(65), [watts, setWatts] = useState(85);
+  const [rpm, setRPM] = useState(80), [watts, setWatts] = useState(45);
   const [extra, setExtra] = useState(''), [inputError, setInputError] = useState('');
   const [raw, setRaw] = useState(false), [paused, setPaused] = useState(false);
   const [now, setNow] = useState(Date.now());

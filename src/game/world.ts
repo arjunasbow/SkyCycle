@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Target } from './flight';
+import { createCourse, type Target } from './flight';
 export type Quality = 'low' | 'medium' | 'high';
 export const riverX = (z: number) => -105 + Math.sin(z * .0034) * 65;
 export function terrainHeight(x: number, z: number) {
@@ -59,15 +59,14 @@ export function createWorld(quality: Quality): World {
   }
   const clouds = new THREE.Group(); scene.add(clouds); const cloudMat = material(0xf5f0d9);
   for (let i = 0; i < 24; i++) { const x = (random() - .5) * 1700, y = 200 + random() * 130, z = 400 - random() * 3100; for (let j = 0; j < 3; j++) mesh(sphere, cloudMat, x + j * 20, y + (j === 1 ? 6 : 0), z, 28, 12 + random() * 9, 15); }
-  const targets: Target[] = [], targetObjects: THREE.Object3D[] = [];
-  const ringGeo = new THREE.TorusGeometry(10, .65, 6, quality === 'low' ? 24 : 40);
-  for (let i = 0; i < 20; i++) {
-    const z = -50 - i * 112, x = Math.sin(i * .72) * 55, y = 43 + Math.sin(i * .65) * 22;
-    const target: Target = { x, y, z, radius: 9.5, hit: false, kind: i % 5 === 4 ? 'balloon' : 'ring' }; targets.push(target);
+  const targets = createCourse(), targetObjects: THREE.Object3D[] = [];
+  const ringGeo = new THREE.TorusGeometry(6.5, .45, 6, quality === 'low' ? 24 : 40);
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i], { x, y, z } = target;
     const group = new THREE.Group(); group.position.set(x, y, z); scene.add(group); targetObjects.push(group);
     if (target.kind === 'ring') {
       mesh(ringGeo, goldMat, 0, 0, 0, 1, 1, 1, group);
-      for (let j = 0; j < 4; j++) { const angle = j * Math.PI / 2; mesh(sphere, creamMat, Math.sin(angle) * 10, Math.cos(angle) * 10, 0, .85, .85, .85, group); }
+      for (let j = 0; j < 4; j++) { const angle = j * Math.PI / 2; mesh(sphere, creamMat, Math.sin(angle) * 6.5, Math.cos(angle) * 6.5, 0, .65, .65, .65, group); }
     } else {
       const balloonMat = material(i % 2 ? 0xe39668 : 0xd6b55c);
       mesh(sphere, balloonMat, 0, 3, 0, 7, 9, 7, group); mesh(box, trunkMat, 0, -9, 0, 3.5, 2.5, 3.5, group);
