@@ -1,15 +1,17 @@
 import * as THREE from 'three';
 import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
 import { addSpaceScenery } from './space';
+import { addRoadScenery } from './road';
+import type { RaceState } from './race';
 export type Quality = 'low' | 'medium' | 'high';
-export type Environment = 'valley' | 'space';
+export type Environment = 'valley' | 'space' | 'road';
 export const riverX = (z: number) => -105 + Math.sin(z * .0034) * 65;
 export function terrainHeight(x: number, z: number) {
   const d = Math.abs(x - riverX(z));
   return Math.max(-2, (Math.sin(x * .017 + z * .003) * 6 + Math.cos(z * .011) * 4) * Math.min(1, d / 90) + Math.max(0, d - 220) * .2 - 2);
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
-export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
+export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateRace?: (race: RaceState, timed: boolean) => void; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
 export function createWorld(quality: Quality, environment: Environment = 'valley'): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
@@ -68,7 +70,8 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   }
   let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   const space = environment === 'space' ? addSpaceScenery(scene, quality) : undefined;
-  const targets = createCourse(), targetObjects: THREE.Object3D[] = [];
+  const road = environment === 'road' ? addRoadScenery(scene) : undefined;
+  const targets = environment === 'road' ? [] : createCourse(), targetObjects: THREE.Object3D[] = [];
   const ringGeo = new THREE.TorusGeometry(6.5, .45, 6, quality === 'low' ? 24 : 40);
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i], { x, y, z } = target;
@@ -83,7 +86,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
     }
   }
   // Side balloons are collectible bonus targets too; they do not redirect auto-steering.
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < (environment === 'road' ? 0 : 6); i++) {
     const x = (i % 2 ? -1 : 1) * (180 + random() * 100), y = 85 + random() * 60, z = -200 - i * 390;
     const group = new THREE.Group(); group.position.set(x, y, z); scene.add(group); targetObjects.push(group);
     targets.push({ x, y, z, radius: 13, hit: false, kind: 'balloon', bonus: true, balloonOffsetY: 0, balloonRadii: [13, 17, 13] });
@@ -117,9 +120,10 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   for (const side of [-1, 1]) { tube([side * .2, 2.5, -.05], [side * .4, 1.95, -.85], .08, creamMat); tube([side * .18, 1.92, .3], [side * .23, 1.35, -.1], .1, dark); tube([side * .23, 1.35, -.1], [side * .25, .8, 0], .08, creamMat); }
   tube([0, 1.5, -.85], [0, 1.5, -1.85], .1, metal); const propeller = new THREE.Group(); propeller.position.set(0, 1.5, -1.9); bike.add(propeller);
   mesh(box, metal, 0, 0, 0, 2.4, .14, .12, propeller); mesh(sphere, orange, 0, 0, -.1, .18, .18, .2, propeller);
+  if (road) { propeller.visible = false; road.attachRiders(bike); }
   const resetTargets = () => { burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {
-    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate,
+    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate, updateRace: road?.update,
     update(time, thrust, dt) {
       if (burst.visible) {
         burstAge += dt; burst.visible = burstAge < .85; burstMaterial.opacity = Math.max(0, 1 - burstAge / .85);

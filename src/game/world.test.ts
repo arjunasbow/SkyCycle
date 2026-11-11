@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createWorld } from './world';
+import { initialRace } from './race';
 it('makes side balloons collectible and reuses one bounded hit-effect pool', () => {
   const world = createWorld('low');
   expect(world.targets).toHaveLength(26); expect(world.targetObjects).toHaveLength(26);
@@ -11,6 +12,19 @@ it('makes side balloons collectible and reuses one bounded hit-effect pool', () 
   expect(world.targetObjects[0].visible).toBe(false); expect(pools[0].visible).toBe(true);
   world.update(1, 1, .9); expect(pools[0].visible).toBe(false);
   world.resetTargets(); expect(world.targetObjects[0].visible).toBe(true); world.dispose();
+});
+it('builds a road pack without flight targets and shows the timed finish only near the end', () => {
+  const world = createWorld('low', 'road'), race = initialRace();
+  expect(world.targets).toHaveLength(0); expect(world.propeller.visible).toBe(false);
+  let riders = 0; world.scene.traverse(o => { if (o.name === 'simulated-racer') riders++; }); expect(riders).toBe(5);
+  expect(world.scene.getObjectByName('race-road')).toBeInstanceOf(THREE.Mesh);
+  world.updateRace!(race, true); expect(world.scene.getObjectByName('race-finish')!.visible).toBe(false);
+  race.elapsed = 295; race.speed = 6; world.updateRace!(race, true);
+  const finish = world.scene.getObjectByName('race-finish')!;
+  expect(finish.visible).toBe(true); expect(finish.position.z).toBe(80);
+  world.updateRace!(race, false); expect(finish.visible).toBe(false);
+  race.elapsed = 300; world.updateRace!(race, true); expect(finish.position.z).toBe(110);
+  world.dispose(); expect(world.scene.children).toHaveLength(0);
 });
 it('keeps the same collectible course in space, with bounded scenery and periodic comets', () => {
   const valley = createWorld('low'), space = createWorld('low', 'space');
