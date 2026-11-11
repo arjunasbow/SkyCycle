@@ -1,0 +1,65 @@
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { BluetoothBike } from './bike/bluetooth';
+import { SimulatedBike } from './bike/simulated';
+import { shortUUID } from './bike/parsers';
+import type { BikeDataAdapter, BikeState } from './bike/types';
+const Game = lazy(() => import('./game/Game'));
+const ble = new BluetoothBike(), simulated = new SimulatedBike();
+const time = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
+export default function App() {
+  const [tab, setTab] = useState<'diagnostics' | 'flight'>('diagnostics');
+  const [adapter, setAdapter] = useState<BikeDataAdapter>(simulated);
+  const [state, setState] = useState<BikeState>(simulated.getState());
+  const [diagnostics, setDiagnostics] = useState({ entries: [...ble.entries], characteristics: [...ble.characteristics] });
+  const [rpm, setRPM] = useState(65), [watts, setWatts] = useState(85);
+  const [extra, setExtra] = useState(''), [inputError, setInputError] = useState('');
+  const [raw, setRaw] = useState(false), [paused, setPaused] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => adapter.subscribe(setState), [adapter]);
+  useEffect(() => { simulated.connect(); return () => { simulated.disconnect(); ble.disconnect(); }; }, []);
+  useEffect(() => { const timer = setInterval(() => { if (!paused) setDiagnostics({ entries: [...ble.entries], characteristics: ble.characteristics.map(c => ({ ...c })) }); }, 500); return () => clearInterval(timer); }, [paused]);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(timer); }, []);
+  const simulate = () => { ble.disconnect(); setAdapter(simulated); simulated.connect(); };
+  const connect = () => {
+    const ids = extra.split(/[\s,]+/).filter(Boolean);
+    if (ids.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) { setInputError('Enter full 128-bit service UUIDs, separated by commas.'); return; }
+    setInputError(''); simulated.disconnect(); setAdapter(ble); void ble.connect(ids);
+  };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([ble.exportLog()], { type: 'application/json' }));
+    const a = document.createElement('a'); a.href = url; a.download = 'skycycle-diagnostics.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const sample = state.sample;
+  const fresh = (at: number | undefined) => now - (at ?? sample.timestamp) < 3000 && ['connected', 'simulated'].includes(state.status);
+  const value = (v: number | undefined, at?: number) => v !== undefined && fresh(at) ? Math.round(v) : '—';
+  return <div className="app-shell">
+    <header className="topbar"><a className="brand" href="#"><span className="brand-mark">✳</span> SkyCycle<span className="lab">FLIGHT LAB</span></a><span className="edition">PEDAL POWERED. POSSIBILITY DRIVEN.</span><span className="version">PROTOTYPE 01 <i/></span></header>
+    <main>
+      <div className="page-heading"><div><div className="eyebrow">A LITTLE EFFORT. A WHOLE NEW PERSPECTIVE.</div><h1>Your next ride is up.</h1><p>Connect your bike. Find your rhythm. Take to the skies.</p></div><span className="phase-tag">HARDWARE COMPATIBILITY UNVERIFIED</span></div>
+      <nav className="tabs" aria-label="Workspace"><button className={tab === 'diagnostics' ? 'selected' : ''} onClick={() => setTab('diagnostics')}>01 <span>Bike diagnostics</span></button><button className={tab === 'flight' ? 'selected' : ''} onClick={() => setTab('flight')}>02 <span>Flight simulator</span></button><span className="tab-note">READ-ONLY BLUETOOTH · NO RESISTANCE CONTROL</span></nav>
+      {tab === 'flight' ? <Suspense fallback={<div className="panel">Preparing the valley…</div>}><Game adapter={adapter} state={state} simulate={simulate}/></Suspense> : <>
+        <section className="diagnostic-layout">
+          <div className="panel connection-panel"><div className="panel-heading"><span className="eyebrow">THE CONNECTION</span><span className={`status ${state.status}`}><i/>{state.status}</span></div><h2>Meet your engine.</h2><p className="muted">Explore the data behind your ride before your first flight.</p>
+            <div className="device-art" aria-hidden="true"><div className="signal signal-one"/><div className="signal signal-two"/><svg viewBox="0 0 300 140"><g fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="72" cy="97" r="31"/><circle cx="226" cy="97" r="31"/><path d="M72 97l43-66 45 66H72l32-51h83l39 51M160 97l32-75h20M103 29h29M192 22l-6-10h-13"/><circle cx="160" cy="97" r="8"/><path d="M160 97l12 12h12"/></g></svg><span>YOUR BIKE. NEW POSSIBILITIES.</span></div>
+            <button className="primary full" onClick={connect} disabled={state.status === 'connecting'}>{state.status === 'connecting' ? 'Discovering bike…' : '＋ Connect Bluetooth bike'}<span>↗</span></button>
+            <div className="button-row"><button className="secondary" onClick={simulate}>Use simulated bike</button><button className="text-button" onClick={() => adapter.disconnect()}>Disconnect</button></div>
+            {(state.error || inputError) && <div role="alert" className="error">{inputError || state.error}</div>}
+            <details className="advanced"><summary>Advanced service discovery</summary><p>Only accessible, authorized services can be discovered. Add known vendor service UUIDs before connecting. No proprietary protocol is assumed.</p><label>Additional service UUIDs<input value={extra} onChange={e => setExtra(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/></label><label>FTMS resistance field layout<select defaultValue="gss2026" disabled={state.status === 'connected' || state.status === 'connecting'} onChange={e => { ble.resistanceFormat = e.target.value as 'gss2026' | 'legacy-ftms'; }}><option value="gss2026">Current GATT supplement ? 1-byte uint8</option><option value="legacy-ftms">Legacy FTMS ? 2-byte sint16</option></select></label><p>Select from device documentation or verified packet captures. This only changes parsing, never bike resistance.</p></details>
+          </div>
+          <div className="telemetry"><div className="telemetry-title"><div><div className="eyebrow">LIVE TELEMETRY</div><h2>The rhythm of your ride.</h2></div><span className="live-label"><i/>{state.status === 'simulated' ? 'SIMULATED DATA' : fresh(sample.timestamp) ? 'RECEIVING' : 'AWAITING DATA'}</span></div>
+            <div className="metrics"><Metric label="CADENCE" value={value(sample.cadence, sample.cadenceAt)} unit="RPM" type="cadence"/><Metric label="POWER OUTPUT" value={value(sample.watts, sample.wattsAt)} unit="WATTS" type="power"/><Metric label="REPORTED SPEED" value={value(sample.speedKph)} unit="KM/H" type="speed"/></div>
+            <div className="panel simulator-panel"><div className="panel-heading"><div><div className="eyebrow">VIRTUAL TRAINER</div><h3>Set your own pace.</h3></div><span className="pill">{adapter === simulated ? 'SIMULATION ACTIVE' : 'SIMULATION READY'}</span></div><p className="muted">No bike? No problem. Try the complete experience with simulated input.</p><div className="sliders"><label><span>Pedalling cadence <strong>{rpm} <small>RPM</small></strong></span><input aria-label="Simulated cadence" type="range" min="0" max="130" value={rpm} onChange={e => { const n = +e.target.value; setRPM(n); simulated.set(n, watts); }}/><span className="range-label"><span>REST</span><span>130 RPM</span></span></label><label><span>Power output <strong>{watts} <small>W</small></strong></span><input aria-label="Simulated watts" type="range" min="0" max="300" value={watts} onChange={e => { const n = +e.target.value; setWatts(n); simulated.set(rpm, n); }}/><span className="range-label"><span>0 W</span><span>300 W</span></span></label></div></div>
+            <div className="safety-note"><span>ⓘ</span><p><strong>Built to observe, never to control.</strong> SkyCycle reads bike data only. It never writes to device characteristics or changes resistance.</p></div>
+          </div>
+        </section>
+        <section className="panel data-panel"><div className="panel-heading"><div><div className="eyebrow">UNDER THE HOOD</div><h2>Bluetooth explorer</h2></div><button className="secondary" onClick={download}>↓ Export JSON log</button></div><p className="muted">FTMS · Cycling Power · Speed & Cadence · Heart Rate · Battery. Availability depends on your bike and browser permissions.</p>
+          <div className="explorer-grid"><div><h3>Accessible characteristics <span className="count">{diagnostics.characteristics.length}</span></h3>{!diagnostics.characteristics.length ? <div className="empty-state"><span>⌁</span><p>Connect a Bluetooth bike to explore its services.</p><small>Simulation uses the shared adapter, without GATT services.</small></div> : <div className="characteristic-list">{diagnostics.characteristics.map(c => <div className="characteristic" key={c.key}><div><strong>{shortUUID(c.uuid)}</strong><small>Service {shortUUID(c.service)} · {c.standard ? 'Standard measurement' : 'Unknown format'}</small></div><div>{c.read && <button onClick={() => void ble.readCharacteristic(c.key)}>Read</button>}{(c.notify || c.indicate) && <button disabled={c.subscribed} onClick={() => void ble.subscribeCharacteristic(c.key)}>{c.subscribed ? 'Listening' : 'Listen'}</button>}</div></div>)}</div>}</div>
+          <div><div className="log-heading"><h3>Event stream</h3><button className="text-button" onClick={() => setPaused(!paused)}>{paused ? 'Resume' : 'Freeze view'}</button><button className="text-button" onClick={() => ble.clearLog()}>Clear</button></div><label className="raw-toggle"><input type="checkbox" checked={raw} onChange={e => setRaw(e.target.checked)}/> Show raw bytes locally (may contain private vendor data)</label><div className="event-log" role="log" aria-label="Bluetooth diagnostic events">{diagnostics.entries.length ? diagnostics.entries.slice(-35).reverse().map((e, i) => <div key={`${e.elapsedMs}-${i}`} className={`log-entry ${e.kind.includes('error') ? 'log-error' : ''}`}><time>+{time(e.elapsedMs)}</time><b>{e.kind}</b>{e.characteristic && <code>{shortUUID(e.characteristic)}</code>}{e.service && <small>service {shortUUID(e.service)}</small>}<span>{e.message}</span>{e.values && <code>{JSON.stringify(e.values)}</code>}{raw && e.hex && <code className="hex">{e.hex}</code>}</div>) : <p className="log-placeholder">Waiting for a Bluetooth connection…<br/><span>Timestamped notifications will appear here.</span></p>}</div></div></div>
+          <p className="privacy-note">Logs stay in memory (800 events max). Exports contain relative timestamps and interpreted cycling measurements; device names, identifiers, heart rate and raw payloads are excluded. Unknown bytes are local-only. Review before sharing.</p>
+        </section>
+        <div className="bottom-cards"><div><span>01 / CONNECT</span><h3>Made for your setup.</h3><p>Open the HTTPS site in Bluefy on iPhone. Pair your bike, then mirror your display by cable.</p></div><div><span>02 / VERIFY</span><h3>Evidence before assumptions.</h3><p>Yesoul GM1 Plus compatibility is unverified. Service discovery and measurement logs are the first step.</p></div><button onClick={() => setTab('flight')}><span>03 / EXPLORE</span><h3>The valley is calling. ↗</h3><p>Launch the flight simulation. Bluetooth is optional; a sense of adventure isn’t.</p></button></div>
+      </>}
+    </main><footer><span>✳ SkyCycle</span><p>AN ORIGINAL PEDAL-POWERED FLIGHT EXPERIMENT</p><span>Built for the joy of the ride.</span></footer>
+  </div>;
+}
+function Metric({ label, value, unit, type }: { label: string; value: string | number; unit: string; type: string }) { return <div className={`metric ${type}`}><span className="eyebrow">{label}</span><div><strong>{value}</strong><span>{unit}</span></div><svg viewBox="0 0 200 25" preserveAspectRatio="none" aria-hidden="true"><path d={type === 'power' ? 'M0 23L20 21L30 12L43 17L55 5L70 12L90 9L110 15L130 4L150 11L175 6L200 7' : 'M0 22Q25 25 40 16T75 15T110 10T145 9T180 6L200 5'} fill="none" stroke="currentColor" strokeWidth="2"/></svg><small>{type === 'speed' ? 'Available with compatible measurements' : 'Live values · stale after 3 seconds'}</small></div>; }
