@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SimulatedBike } from '../bike/simulated';
 import { BaseAdapter, type BikeState } from '../bike/types';
-import { assistedSteering, collectTargets, courseEffortHint, createCourse, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight } from './flight';
+import { assistedSteering, collectTargets, courseEffortHint, createCourse, DEFAULT_CALIBRATION, DEFAULT_RIDE_SECONDS, FlightInputAdapter, initialFlight, stepFlight, timedRideFinished, wrapCourse } from './flight';
 class TestBike extends BaseAdapter { async connect() {} disconnect() { this.update({ status: 'disconnected', sample: { timestamp: 1000 } }); } update(s: BikeState) { this.emit(s); } }
 describe('flight bike input and physics', () => {
   it('maps comfortable power, supports cadence-only devices and caps excessive power', () => {
@@ -67,5 +67,27 @@ describe('flight bike input and physics', () => {
     }
     expect(score).toBe(2600); expect(minWatts).toBeGreaterThan(35); expect(maxWatts).toBeLessThan(55);
     expect(minWatts).toBeLessThan(43); expect(maxWatts).toBeGreaterThan(47);
+  });
+  it('scores the visible rider passing a ring even when the old ground-reference point misses', () => {
+    const target = { x: 0, y: 8, z: 0, radius: 6, hit: false, kind: 'ring' as const }, hits: number[] = [];
+    expect(collectTargets({ x: 0, y: 0, z: 10 }, { x: 0, y: 0, z: -10 }, [target], hit => hits.push(hit.points))).toBe(100);
+    expect(hits).toEqual([100]);
+    expect(collectTargets({ x: 0, y: 0, z: 10 }, { x: 0, y: 0, z: -10 }, [target])).toBe(0);
+  });
+  it('scores balloon surface contact before its center plane and catches fast swept collisions', () => {
+    const target = { x: 0, y: 0, z: 0, radius: 6, hit: false, kind: 'balloon' as const };
+    expect(collectTargets({ x: 6, y: 0, z: 20 }, { x: 6, y: 0, z: 5 }, [target])).toBe(250);
+    target.hit = false; expect(collectTargets({ x: 0, y: 0, z: 100 }, { x: 0, y: 0, z: -100 }, [target])).toBe(250);
+    target.hit = false; expect(collectTargets({ x: 25, y: 0, z: 100 }, { x: 25, y: 0, z: -100 }, [target])).toBe(0);
+  });
+  it('keeps a timed ride running for five minutes across multiple valley laps with score preserved', () => {
+    const s = initialFlight(), targets = createCourse(); let score = 0, laps = 0, steps = 0;
+    while (!timedRideFinished('arcade', s.elapsed) && steps++ < 60 * 301) {
+      const next = targets.find(t => !t.hit && t.z < s.z), previous = { ...s };
+      stepFlight(s, { steer: assistedSteering(s, targets), pitch: 0 }, courseEffortHint(s, next), 1 / 60);
+      score += collectTargets(previous, s, targets); if (wrapCourse(s, targets)) laps++;
+    }
+    expect(DEFAULT_RIDE_SECONDS).toBe(300); expect(s.elapsed).toBeCloseTo(300, 1); expect(laps).toBeGreaterThanOrEqual(2); expect(score).toBeGreaterThan(5200);
+    expect(timedRideFinished('arcade', 299.9)).toBe(false); expect(timedRideFinished('scenic', 900)).toBe(false);
   });
 });

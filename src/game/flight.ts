@@ -44,7 +44,13 @@ export function stepFlight(s: FlightState, controls: FlightControls, effort: num
   if (s.y <= floor || s.y >= 200) s.verticalSpeed = 0;
   s.elapsed += dt;
 }
-export interface Target { x: number; y: number; z: number; radius: number; hit: boolean; kind: 'ring' | 'balloon'; }
+export interface Target { x: number; y: number; z: number; radius: number; hit: boolean; kind: 'ring' | 'balloon'; bonus?: boolean; balloonRadii?: [number, number, number]; balloonOffsetY?: number; }
+export interface TargetHit { target: Target; index: number; points: number; }
+export const DEFAULT_RIDE_SECONDS = 300;
+export const BIKE_HIT_RADIUS = 1.8;
+export const BIKE_HIT_HEIGHT = 3.2;
+export const BALLOON_RADII: [number, number, number] = [7, 9, 7];
+export const BALLOON_OFFSET_Y = 3;
 export const COURSE_END_Z = -2450;
 export function createCourse(): Target[] {
   return Array.from({ length: 20 }, (_, i) => ({ x: Math.sin(i * .55) * 38, y: 45 + Math.sin(i * .55) * 10, z: -50 - i * 120, radius: 6, hit: false, kind: i % 5 === 4 ? 'balloon' : 'ring' }));
@@ -53,25 +59,50 @@ export function createCourse(): Target[] {
 export function courseEffortHint(s: Pick<FlightState, 'y' | 'z' | 'speed' | 'heading'>, target?: Target): number {
   if (!target) return 1;
   const seconds = Math.max(2, (s.z - target.z) / Math.max(5, Math.cos(s.heading) * s.speed));
-  const desiredVerticalSpeed = clamp((target.y - s.y) / seconds, -1.4, 1.4);
+  const desiredVerticalSpeed = clamp((target.y - (s.y + BIKE_HIT_HEIGHT)) / seconds, -1.4, 1.4);
   return 1 + desiredVerticalSpeed * 2.8 / (9.81 * 2.4);
 }
 /** Lateral-only assistance: leaves power, pitch, altitude and scoring to the rider. */
 export function assistedSteering(s: Pick<FlightState, 'x' | 'z' | 'heading' | 'bank'>, targets: Target[]): number {
-  const next = targets.find(t => !t.hit && t.z < s.z);
+  const next = targets.find(t => !t.bonus && !t.hit && t.z < s.z);
   const dx = (next?.x ?? 0) - s.x;
   const ahead = next ? Math.max(18, s.z - next.z) : 120;
   const desiredHeading = clamp(Math.atan2(dx, ahead), -.9, .9);
   return clamp((desiredHeading - s.heading) * 4 - s.bank * .9, -1, 1);
 }
-/** Segment/plane crossing prevents missed targets when a slow frame skips past a ring. */
-export function collectTargets(previous: Pick<FlightState, 'x' | 'y' | 'z'>, current: Pick<FlightState, 'x' | 'y' | 'z'>, targets: Target[]): number {
+type CollisionPose = Pick<FlightState, 'x' | 'y' | 'z'> & Partial<Pick<FlightState, 'heading' | 'pitch'>>;
+function bikeHitCenter(s: CollisionPose) {
+  return { x: s.x + Math.sin(s.heading ?? 0) * 1.8, y: s.y + BIKE_HIT_HEIGHT + Math.sin(s.pitch ?? 0) * 1.8, z: s.z - Math.cos(s.heading ?? 0) * 1.8 };
+}
+/** Sweep the visible bicycle through the ring plane or expanded balloon ellipsoid. */
+export function collectTargets(previous: CollisionPose, current: CollisionPose, targets: Target[], onHit?: (hit: TargetHit) => void): number {
   let score = 0;
-  for (const t of targets) {
-    if (t.hit || previous.z < t.z || current.z > t.z || current.z === previous.z) continue;
-    const ratio = (previous.z - t.z) / (previous.z - current.z);
-    const x = previous.x + (current.x - previous.x) * ratio, y = previous.y + (current.y - previous.y) * ratio;
-    if (Math.hypot(x - t.x, y - t.y) <= t.radius) { t.hit = true; score += t.kind === 'ring' ? 100 : 250; }
+  const a = bikeHitCenter(previous), b = bikeHitCenter(current);
+  for (let index = 0; index < targets.length; index++) {
+    const t = targets[index]; if (t.hit) continue;
+    let hit = false;
+    if (t.kind === 'ring') {
+      if (a.z < t.z || b.z > t.z || a.z === b.z) continue;
+      const ratio = (a.z - t.z) / (a.z - b.z);
+      const x = a.x + (b.x - a.x) * ratio, y = a.y + (b.y - a.y) * ratio;
+      hit = Math.hypot(x - t.x, y - t.y) <= t.radius + BIKE_HIT_RADIUS;
+    } else {
+      const radii = (t.balloonRadii ?? BALLOON_RADII).map(r => r + BIKE_HIT_RADIUS);
+      const centerY = t.y + (t.balloonOffsetY ?? BALLOON_OFFSET_Y);
+      const p = [(a.x - t.x) / radii[0], (a.y - centerY) / radii[1], (a.z - t.z) / radii[2]];
+      const d = [(b.x - a.x) / radii[0], (b.y - a.y) / radii[1], (b.z - a.z) / radii[2]];
+      const length2 = d.reduce((sum, value) => sum + value * value, 0);
+      const ratio = length2 ? clamp(-p.reduce((sum, value, i) => sum + value * d[i], 0) / length2, 0, 1) : 0;
+      hit = p.reduce((sum, value, i) => sum + (value + d[i] * ratio) ** 2, 0) <= 1;
+    }
+    if (hit) { t.hit = true; const points = t.kind === 'ring' ? 100 : 250; score += points; onHit?.({ target: t, index, points }); }
   }
   return score;
 }
+/** The finite scenery repeats in both modes; only the timer ends an arcade ride. */
+export function wrapCourse(s: FlightState, targets: Target[]): boolean {
+  if (s.z >= COURSE_END_Z) return false;
+  s.z = 110; s.x = 0; s.heading = 0; s.bank = 0;
+  targets.forEach(t => { t.hit = false; }); return true;
+}
+export function timedRideFinished(mode: 'scenic' | 'arcade', elapsed: number): boolean { return mode === 'arcade' && elapsed >= DEFAULT_RIDE_SECONDS; }

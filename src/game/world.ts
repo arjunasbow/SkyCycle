@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createCourse, type Target } from './flight';
+import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
 export type Quality = 'low' | 'medium' | 'high';
 export const riverX = (z: number) => -105 + Math.sin(z * .0034) * 65;
 export function terrainHeight(x: number, z: number) {
@@ -7,7 +7,7 @@ export function terrainHeight(x: number, z: number) {
   return Math.max(-2, (Math.sin(x * .017 + z * .003) * 6 + Math.cos(z * .011) * 4) * Math.min(1, d / 90) + Math.max(0, d - 220) * .2 - 2);
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
-export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; dispose: () => void; }
+export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
 export function createWorld(quality: Quality): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
@@ -69,12 +69,30 @@ export function createWorld(quality: Quality): World {
       for (let j = 0; j < 4; j++) { const angle = j * Math.PI / 2; mesh(sphere, creamMat, Math.sin(angle) * 6.5, Math.cos(angle) * 6.5, 0, .65, .65, .65, group); }
     } else {
       const balloonMat = material(i % 2 ? 0xe39668 : 0xd6b55c);
-      mesh(sphere, balloonMat, 0, 3, 0, 7, 9, 7, group); mesh(box, trunkMat, 0, -9, 0, 3.5, 2.5, 3.5, group);
+      mesh(sphere, balloonMat, 0, BALLOON_OFFSET_Y, 0, ...BALLOON_RADII, group); mesh(box, trunkMat, 0, -9, 0, 3.5, 2.5, 3.5, group);
       for (const dx of [-1.5, 1.5]) mesh(box, creamMat, dx, -6.5, 0, .12, 5, .12, group);
     }
   }
-  // Decorative hot-air balloons further from the flight path.
-  for (let i = 0; i < 6; i++) { const x = (i % 2 ? -1 : 1) * (180 + random() * 100), y = 85 + random() * 60, z = -200 - i * 390; mesh(sphere, material(i % 2 ? 0xd89c74 : 0xe4cc8d), x, y, z, 13, 17, 13); mesh(box, trunkMat, x, y - 22, z, 5, 4, 5); }
+  // Side balloons are collectible bonus targets too; they do not redirect auto-steering.
+  for (let i = 0; i < 6; i++) {
+    const x = (i % 2 ? -1 : 1) * (180 + random() * 100), y = 85 + random() * 60, z = -200 - i * 390;
+    const group = new THREE.Group(); group.position.set(x, y, z); scene.add(group); targetObjects.push(group);
+    targets.push({ x, y, z, radius: 13, hit: false, kind: 'balloon', bonus: true, balloonOffsetY: 0, balloonRadii: [13, 17, 13] });
+    mesh(sphere, material(i % 2 ? 0xd89c74 : 0xe4cc8d), 0, 0, 0, 13, 17, 13, group); mesh(box, trunkMat, 0, -22, 0, 5, 4, 5, group);
+  }
+  // One reusable particle pool keeps hit feedback inexpensive on the phone.
+  const burstPositions = new Float32Array(24 * 3), burstVelocity = new Float32Array(24 * 3);
+  const burstGeometry = new THREE.BufferGeometry(); burstGeometry.setAttribute('position', new THREE.BufferAttribute(burstPositions, 3));
+  burstGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 20);
+  const burstMaterial = new THREE.PointsMaterial({ color: 0xffce65, size: 1.1, transparent: true, depthWrite: false });
+  const burst = new THREE.Points(burstGeometry, burstMaterial); burst.visible = false; scene.add(burst); let burstAge = 0;
+  const celebrate = (index: number) => {
+    const target = targets[index]; burst.position.set(target.x, target.y + (target.kind === 'balloon' ? target.balloonOffsetY ?? BALLOON_OFFSET_Y : 0), target.z);
+    burstPositions.fill(0); burstAge = 0; burst.visible = true; burstMaterial.opacity = 1;
+    burstMaterial.color.setHex(target.kind === 'ring' ? 0xffce65 : 0xf5ad83);
+    for (let i = 0; i < burstVelocity.length; i++) burstVelocity[i] = (random() - .5) * 15;
+    burstGeometry.getAttribute('position').needsUpdate = true;
+  };
   const bike = new THREE.Group(); bike.scale.setScalar(2); scene.add(bike);
   const dark = material(0x294b43), metal = material(0xe8d9b1), orange = material(0xdf8459);
   const wheelGeo = new THREE.TorusGeometry(.65, .055, 6, 24), wheels: THREE.Mesh[] = [];
@@ -90,10 +108,16 @@ export function createWorld(quality: Quality): World {
   for (const side of [-1, 1]) { tube([side * .2, 2.5, -.05], [side * .4, 1.95, -.85], .08, creamMat); tube([side * .18, 1.92, .3], [side * .23, 1.35, -.1], .1, dark); tube([side * .23, 1.35, -.1], [side * .25, .8, 0], .08, creamMat); }
   tube([0, 1.5, -.85], [0, 1.5, -1.85], .1, metal); const propeller = new THREE.Group(); propeller.position.set(0, 1.5, -1.9); bike.add(propeller);
   mesh(box, metal, 0, 0, 0, 2.4, .14, .12, propeller); mesh(sphere, orange, 0, 0, -.1, .18, .18, .2, propeller);
-  const resetTargets = () => { targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
+  const resetTargets = () => { burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {
-    scene, bike, propeller, wheels, targets, targetObjects, resetTargets,
-    update(time, thrust, dt) { propeller.rotation.z += dt * (thrust * 38 + 1); wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); waterMat.color.setHSL(.48, .27, .53 + Math.sin(time * .5) * .008); },
-    dispose() { const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
+    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate,
+    update(time, thrust, dt) {
+      if (burst.visible) {
+        burstAge += dt; burst.visible = burstAge < .85; burstMaterial.opacity = Math.max(0, 1 - burstAge / .85);
+        for (let i = 0; i < burstPositions.length; i++) burstPositions[i] += burstVelocity[i] * dt;
+        burstGeometry.getAttribute('position').needsUpdate = true;
+      }
+      propeller.rotation.z += dt * (thrust * 38 + 1); wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); waterMat.color.setHSL(.48, .27, .53 + Math.sin(time * .5) * .008); },
+    dispose() { const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
   };
 }
