@@ -2,8 +2,11 @@ import * as THREE from 'three';
 import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
 import { addSpaceScenery } from './space';
 import { addRoadScenery } from './road';
+import { addEnhancedValley } from './enhanced-valley';
 import type { RaceState } from './race';
 export type Quality = 'low' | 'medium' | 'high';
+export type ValleyStyle = 'classic' | 'enhanced';
+export const parseValleyStyle = (value: string | null): ValleyStyle => value === 'enhanced' ? 'enhanced' : 'classic';
 export type Environment = 'valley' | 'space' | 'road';
 export const riverX = (z: number) => -105 + Math.sin(z * .0034) * 65;
 export function terrainHeight(x: number, z: number) {
@@ -12,7 +15,7 @@ export function terrainHeight(x: number, z: number) {
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
 export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateRace?: (race: RaceState, timed: boolean) => void; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
-export function createWorld(quality: Quality, environment: Environment = 'valley'): World {
+export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'classic'): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
   const sun = new THREE.DirectionalLight(0xffe6bd, 2.6); sun.position.set(-350, 600, 160); scene.add(sun);
@@ -24,7 +27,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   };
   // Scenery is independent of the bike, targets and flight model.
   let animateScenery = (_time: number) => {};
-  if (environment === 'valley') {
+  if (environment === 'valley' && valleyStyle === 'classic') {
   const terrain = new THREE.PlaneGeometry(1500, 3100, quality === 'low' ? 55 : 90, quality === 'low' ? 90 : 150); terrain.rotateX(-Math.PI / 2); terrain.translate(0, 0, -1200);
   const pos = terrain.getAttribute('position'); const vertexColors = [];
   for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), z = pos.getZ(i), h = terrainHeight(x, z); pos.setY(i, h); const c = new THREE.Color(colors.ground); c.offsetHSL(.015 * Math.sin(z), -.02, Math.sin(x * .03 + z * .02) * .025); vertexColors.push(c.r, c.g, c.b); }
@@ -69,15 +72,17 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   for (let i = 0; i < 24; i++) { const x = (random() - .5) * 1700, y = 200 + random() * 130, z = 400 - random() * 3100; for (let j = 0; j < 3; j++) mesh(sphere, cloudMat, x + j * 20, y + (j === 1 ? 6 : 0), z, 28, 12 + random() * 9, 15); }
   }
   let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const enhanced = environment === 'valley' && valleyStyle === 'enhanced' ? addEnhancedValley(scene, quality, terrainHeight, riverX) : undefined;
   const space = environment === 'space' ? addSpaceScenery(scene, quality) : undefined;
   const road = environment === 'road' ? addRoadScenery(scene) : undefined;
   const targets = environment === 'road' ? [] : createCourse(), targetObjects: THREE.Object3D[] = [];
-  const ringGeo = new THREE.TorusGeometry(6.5, .45, 6, quality === 'low' ? 24 : 40);
+  const polishedGold = enhanced ? new THREE.MeshStandardMaterial({ color: 0xffc65c, metalness: .45, roughness: .3, emissive: 0xb77a18, emissiveIntensity: .22 }) : goldMat;
+  const ringGeo = new THREE.TorusGeometry(6.5, .45, enhanced ? 10 : 6, quality === 'low' ? 24 : 40);
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i], { x, y, z } = target;
     const group = new THREE.Group(); group.position.set(x, y, z); scene.add(group); targetObjects.push(group);
     if (target.kind === 'ring') {
-      mesh(ringGeo, goldMat, 0, 0, 0, 1, 1, 1, group);
+      mesh(ringGeo, polishedGold, 0, 0, 0, 1, 1, 1, group);
       for (let j = 0; j < 4; j++) { const angle = j * Math.PI / 2; mesh(sphere, creamMat, Math.sin(angle) * 6.5, Math.cos(angle) * 6.5, 0, .65, .65, .65, group); }
     } else {
       const balloonMat = material(i % 2 ? 0xe39668 : 0xd6b55c);
@@ -120,6 +125,20 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   for (const side of [-1, 1]) { tube([side * .2, 2.5, -.05], [side * .4, 1.95, -.85], .08, creamMat); tube([side * .18, 1.92, .3], [side * .23, 1.35, -.1], .1, dark); tube([side * .23, 1.35, -.1], [side * .25, .8, 0], .08, creamMat); }
   tube([0, 1.5, -.85], [0, 1.5, -1.85], .1, metal); const propeller = new THREE.Group(); propeller.position.set(0, 1.5, -1.9); bike.add(propeller);
   mesh(box, metal, 0, 0, 0, 2.4, .14, .12, propeller); mesh(sphere, orange, 0, 0, -.1, .18, .18, .2, propeller);
+  if (enhanced) {
+    const chrome = new THREE.MeshStandardMaterial({ color: 0xd9e4df, metalness: .55, roughness: .28 });
+    const hub = new THREE.CylinderGeometry(.12, .12, .34, 8);
+    for (const z of [-.95, .95]) {
+      const axle = mesh(hub, chrome, 0, .72, z, 1, 1, 1, bike); axle.rotation.z = Math.PI / 2;
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4;
+        tube([0, .72, z], [0, .72 + Math.cos(a) * .61, z + Math.sin(a) * .61], .012, chrome);
+      }
+    }
+    mesh(sphere, dark, 0, 2.85, -.42, .26, .1, .08, bike);
+    mesh(box, orange, 0, 2.29, .19, .37, .46, .2, bike);
+    for (const side of [-1, 1]) mesh(box, orange, side * 1.05, 0, 0, .28, .16, .14, propeller);
+  }
   if (road) { propeller.visible = false; road.attachRiders(bike); }
   const resetTargets = () => { burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {
@@ -130,7 +149,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
         for (let i = 0; i < burstPositions.length; i++) burstPositions[i] += burstVelocity[i] * dt;
         burstGeometry.getAttribute('position').needsUpdate = true;
       }
-      propeller.rotation.z += dt * (thrust * 38 + 1); wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); space?.update(time); },
+      propeller.rotation.z += dt * (thrust * 38 + 1); wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); enhanced?.update(time, bike.position); space?.update(time); },
     dispose() { const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
   };
 }

@@ -166,3 +166,29 @@ No remote existed when this workspace was initialized; local implementation does
 The header and full-screen flight view show **Prototype 1.1, 1.2, ...**, advancing with each new Git revision after the initial eleven commits. Flight settings also show the exact short commit and build time. Rebuilding the same revision keeps its prototype number but gives it a fresh build timestamp, so code versions are consistent across GitHub and Cloudflare. The production build emits the same metadata at **`/skycycle/build-info.json`**, served with no-cache. Build time is unique per build; no local certificate or account data is included.
 
 Shallow CI checkouts restore Git history before numbering so a fresh Cloudflare build does not reset to 1. If full history is unavailable, the visible label uses the commit instead of inventing a sequential number. A dashboard banner saying the project is disconnected from the Git account means the stored repo/branch alone is insufficient: reauthorize Cloudflare's GitHub app before expecting pushes to trigger builds.
+
+## Enhanced Valley graphics
+
+Choose **Flight settings → Valley scenery → Enhanced Valley** while in the Valley world. Classic Amber Valley remains the default. The scenery preference is saved locally; changing scenery or quality restarts the ride.
+
+The independent `src/game/enhanced-valley.ts` module adds continuous irregular Alpine ridges, snow and rock vertex colours, mixed layered conifers and broadleaf crowns, riverside rocks and bushes, gabled chalets, bridges, paths and hilltop ruins. An opaque procedural water shader animates ripples and depth/shore colours. A gradient sky, distance haze, warm sunlight and slowly drifting cloud clusters provide atmosphere. Enhanced-only ring materials and bicycle details retain the original target and animation transforms.
+
+The collision-height function, bike data, fixed 60 Hz simulation, course, scoring, assistance, Space and Road are unchanged. Mountain height additions start beyond the playable ±470 m corridor. All artwork is generated locally without asset downloads, texture maps, reflections, post-processing or shadow passes.
+
+### Performance and validation
+
+Low remains the iPhone default (pixel ratio capped at 1); Medium caps it at 1.25 and High at 1.5. Terrain resolution, vegetation count, clouds and flowers scale by quality. Vegetation and village parts share geometry/materials in spatial instance batches; Three.js frustum-culls batches, while small details also disappear at distance. This is a lightweight visibility cutoff, not a multi-mesh geometric LOD system. Materials are compiled before Enhanced flight starts. Existing scene cleanup disposes shared resources once and releases instance buffers on every mode/quality change.
+
+Run `node scripts/valley-budget.mjs` for a reproducible CPU scene inventory:
+
+| Quality | Instance batches | Instances | Whole-scene triangles | Unique geometries |
+| --- | ---: | ---: | ---: | ---: |
+| Low | 109 | 1,998 | 118,100 | 45 |
+| Medium | 117 | 2,828 | 188,268 | 45 |
+| High | 117 | 3,635 | 258,728 | 45 |
+
+These totals include off-screen objects and are **not rendered draw calls or a device benchmark**. The existing FPS readout's tooltip now includes live rendered calls, triangles, geometry and texture counts, sampled twice per second. No additional HUD panels are required.
+
+Automated validation: 63 tests pass, including deterministic instance transforms, identical Classic/Enhanced collectible targets, unchanged corridor heights, quality tiers, animation bounds, reset behaviour, preference validation and disposal of every attached geometry, material and instance buffer. Production build passes with Vite's large Three.js chunk warning.
+
+Browser visual inspection and live FPS/GPU-memory measurements remain unverified: the browser host was unavailable, and Windows computer use stopped because it could not reliably establish the active browser URL. No iPhone, Bluefy, YESOUL or mirrored-display testing was available. A stable 60 FPS is a target, not a measured result. Before relying on Enhanced for long rides, check all three tiers on the actual phone, ride the full course, and compare renderer counts after repeated Classic/Enhanced/Space/Road switches. Low omits flowers and uses fewer terrain samples and trees; distant details use visibility cutoffs. Clouds use opaque smooth geometry rather than volumetrics; water uses surface patterns rather than reflections. Waterfalls, realtime shadows and dynamic reflections are intentionally omitted to keep the render workload bounded.
