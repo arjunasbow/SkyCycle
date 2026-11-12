@@ -6,7 +6,7 @@ import { addEnhancedValley } from './enhanced-valley';
 import type { RaceState } from './race';
 export type Quality = 'low' | 'medium' | 'high';
 export type ValleyStyle = 'classic' | 'enhanced';
-export const parseValleyStyle = (value: string | null): ValleyStyle => value === 'enhanced' ? 'enhanced' : 'classic';
+export const parseValleyStyle = (value: string | null): ValleyStyle => value === 'classic' ? 'classic' : 'enhanced';
 export type Environment = 'valley' | 'space' | 'road';
 export const riverX = (z: number) => -105 + Math.sin(z * .0034) * 65;
 export function terrainHeight(x: number, z: number) {
@@ -15,7 +15,7 @@ export function terrainHeight(x: number, z: number) {
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
 export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateRace?: (race: RaceState, timed: boolean, dt?: number) => void; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
-export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'classic'): World {
+export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'enhanced'): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
   const sun = new THREE.DirectionalLight(0xffe6bd, 2.6); sun.position.set(-350, 600, 160); scene.add(sun);
@@ -123,8 +123,32 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   // Stylized rider: cream helmet, jacket and articulated legs.
   mesh(sphere, creamMat, 0, 2.85, -.15, .32, .35, .34, bike).name = 'rider-helmet'; tube([0, 1.9, .3], [0, 2.55, -.05], .24, treeMat).name = 'rider-torso';
   for (const side of [-1, 1]) { tube([side * .2, 2.5, -.05], [side * .4, 1.95, -.85], .08, creamMat); tube([side * .18, 1.92, .3], [side * .23, 1.35, -.1], .1, dark).name = `rider-thigh-${side}`; tube([side * .23, 1.35, -.1], [side * .25, .8, 0], .08, creamMat).name = `rider-shin-${side}`; }
-  tube([0, 1.5, -.85], [0, 1.5, -1.85], .1, metal); const propeller = new THREE.Group(); propeller.position.set(0, 1.5, -1.9); bike.add(propeller);
-  mesh(box, metal, 0, 0, 0, 2.4, .14, .12, propeller); mesh(sphere, orange, 0, 0, -.1, .18, .18, .2, propeller);
+  const propeller = new THREE.Group(); propeller.name = 'bike-rotor'; propeller.position.set(0, 1.5, -1.9); bike.add(propeller);
+  const exhausts: THREE.Group[] = [];
+  if (space) {
+    propeller.visible = false;
+    const thrusters = new THREE.Group(); thrusters.name = 'rocket-thrusters'; bike.add(thrusters);
+    const casing = new THREE.MeshStandardMaterial({ color: 0xc6d5df, metalness: .7, roughness: .3 });
+    const nozzle = material(0x283b50);
+    const plume = new THREE.MeshBasicMaterial({ color: 0x39bfff, transparent: true, opacity: .65, blending: THREE.AdditiveBlending, depthWrite: false });
+    const core = new THREE.MeshBasicMaterial({ color: 0xe1faff, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false });
+    const bodyGeo = new THREE.CylinderGeometry(.23, .23, .85, 16);
+    const nozzleGeo = new THREE.CylinderGeometry(.31, .18, .35, 16, 1, true);
+    const flameGeo = new THREE.ConeGeometry(1, 1, 16);
+    for (const side of [-1, 1]) {
+      const x = side * .65;
+      tube([0, 1.35, .45], [x, 1.35, .8], .07, metal, thrusters);
+      mesh(bodyGeo, casing, x, 1.35, .95, 1, 1, 1, thrusters).rotation.x = Math.PI / 2;
+      mesh(nozzleGeo, nozzle, x, 1.35, 1.45, 1, 1, 1, thrusters).rotation.x = Math.PI / 2;
+      const exhaust = new THREE.Group(); exhaust.name = `rocket-exhaust-${side}`; exhaust.position.set(x, 1.35, 1.63); thrusters.add(exhaust); exhausts.push(exhaust);
+      mesh(flameGeo, plume, 0, 0, .65, .26, 1.3, .26, exhaust).rotation.x = Math.PI / 2;
+      mesh(flameGeo, core, 0, 0, .4, .14, .8, .14, exhaust).rotation.x = Math.PI / 2;
+      exhaust.scale.z = .18;
+    }
+  } else {
+    tube([0, 1.5, -.85], [0, 1.5, -1.85], .1, metal);
+    mesh(box, metal, 0, 0, 0, 2.4, .14, .12, propeller); mesh(sphere, orange, 0, 0, -.1, .18, .18, .2, propeller);
+  }
   if (enhanced) {
     const chrome = new THREE.MeshStandardMaterial({ color: 0xd9e4df, metalness: .55, roughness: .28 });
     const hub = new THREE.CylinderGeometry(.12, .12, .34, 8);
@@ -149,7 +173,9 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
         for (let i = 0; i < burstPositions.length; i++) burstPositions[i] += burstVelocity[i] * dt;
         burstGeometry.getAttribute('position').needsUpdate = true;
       }
-      propeller.rotation.z += dt * (thrust * 38 + 1); if (!road) wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); enhanced?.update(time, bike.position); space?.update(time); },
+      if (!space) propeller.rotation.z += dt * (thrust * 38 + 1);
+      exhausts.forEach((exhaust, i) => { exhaust.scale.z = .18 + Math.min(2, Math.max(0, thrust)) * (.85 + .06 * Math.sin(time * 32 + i * 2)); });
+      if (!road) wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); enhanced?.update(time, bike.position); space?.update(time); },
     dispose() { const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
   };
 }

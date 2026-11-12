@@ -4,10 +4,11 @@ import { createWorld, parseValleyStyle, terrainHeight, type Quality } from './wo
 import { alpineHeight, sceneryRandom } from './enhanced-valley';
 
 describe('enhanced valley', () => {
-  it('validates the optional saved preference and retains classic by default', () => {
+  it('defaults to enhanced scenery and respects an explicit classic preference', () => {
     expect(parseValleyStyle('enhanced')).toBe('enhanced');
-    for (const value of [null, 'classic', 'unknown', 'space']) expect(parseValleyStyle(value)).toBe('classic');
-    const world = createWorld('low'); expect(world.scene.getObjectByName('enhanced-valley')).toBeUndefined(); world.dispose();
+    expect(parseValleyStyle('classic')).toBe('classic');
+    for (const value of [null, 'unknown', 'space']) expect(parseValleyStyle(value)).toBe('enhanced');
+    const world = createWorld('low'); expect(world.scene.getObjectByName('enhanced-valley')).toBeDefined(); world.dispose();
   });
   it('uses deterministic scenery and exactly the existing collision surface in the playable corridor', () => {
     const a = sceneryRandom(), b = sceneryRandom();
@@ -20,7 +21,7 @@ describe('enhanced valley', () => {
     expect(signatures[0]).toEqual(signatures[1]); worlds.forEach(w => w.dispose());
   });
   it.each<Quality>(['low', 'medium', 'high'])('preserves targets and bounds animation and resources at %s quality', quality => {
-    const classic = createWorld(quality), world = createWorld(quality, 'valley', 'enhanced');
+    const classic = createWorld(quality, 'valley', 'classic'), world = createWorld(quality, 'valley', 'enhanced');
     expect(world.targets).toEqual(classic.targets); expect(world.bike.position).toEqual(classic.bike.position);
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>(), instances: THREE.InstancedMesh[] = [];
     let objects = 0;
