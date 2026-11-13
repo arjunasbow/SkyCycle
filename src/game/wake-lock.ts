@@ -1,4 +1,12 @@
 export interface AwakeState { kind: 'off' | 'requesting' | 'active' | 'unavailable' | 'released'; message: string; }
+
+export function awakeStatusLabel(enabled: boolean, status: 'ready' | 'running' | 'paused' | 'finished', state: AwakeState): string {
+  if (!enabled) return 'AWAKE OFF';
+  if (status !== 'running') return status === 'paused' ? 'AWAKE PAUSED' : 'AWAKE READY';
+  if (state.kind === 'active') return 'AWAKE ON';
+  if (state.kind === 'off' || state.kind === 'requesting') return 'WAKE REQUEST';
+  return 'SLEEP POSSIBLE';
+}
 type BluefyScreenControl = { setScreenDimEnabled?: (enabled: boolean) => void | Promise<void> };
 /** Display lifecycle only. Does not select, connect to, read or write a BLE peripheral. */
 export class ScreenAwakeController {
@@ -7,6 +15,7 @@ export class ScreenAwakeController {
   private bluefy?: BluefyScreenControl;
   constructor(private notify: (state: AwakeState) => void) {}
   async start() {
+    if (this.lock || this.bluefy) return;
     const generation = ++this.generation;
     if (document.visibilityState === 'hidden') { this.notify({ kind: 'off', message: 'Keep-awake waits until the ride is visible.' }); return; }
     this.notify({ kind: 'requesting', message: 'Requesting screen keep-awake for this ride.' });

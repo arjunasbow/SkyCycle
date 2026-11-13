@@ -34,6 +34,7 @@ export class BluetoothBike extends BaseAdapter {
   private started = Date.now();
   private device?: BluetoothDevice;
   private preferredDevice?: BluetoothDevice;
+  private savedPickerNeeded = false;
   private session = 0;
   private active = new Map<string, BluetoothRemoteGATTCharacteristic>();
   private handlers = new Map<string, EventListener>();
@@ -51,7 +52,7 @@ export class BluetoothBike extends BaseAdapter {
     this.emit({ ...this.state, sample: { timestamp: 0 }, dataWarning: undefined, notice: 'Parser updated. Waiting for a fresh measurement.' });
     this.log({ kind: 'parser-config', message: `FTMS resistance layout changed to ${format}. No device writes.` });
   }
-  forgetSavedBike() { forgetBike(); this.preferredDevice = undefined; this.onDiagnostics?.(); }
+  forgetSavedBike() { forgetBike(); this.preferredDevice = undefined; this.savedPickerNeeded = false; this.onDiagnostics?.(); }
   async connect(extraServices: string[] = [], pickerOnly = false, reconnectSaved = false) {
     if (!window.isSecureContext) { this.fail('Bluetooth requires HTTPS (or localhost for desktop development).'); return; }
     if (!navigator.bluetooth || typeof navigator.bluetooth.requestDevice !== 'function') { this.fail('Web Bluetooth device selection is unavailable. On iPhone, open this HTTPS page in Bluefy; simulation remains available.'); return; }
@@ -72,13 +73,24 @@ export class BluetoothBike extends BaseAdapter {
       if (saved && this.preferredDevice && (!saved.id || this.preferredDevice.id === saved.id)) {
         this.log({ kind: 'reconnect', message: 'Reusing the saved device from this page session.' });
         selection = Promise.resolve(this.preferredDevice);
-      } else if (saved?.id && typeof navigator.bluetooth.getDevices === 'function') {
+      } else if (saved?.name && this.savedPickerNeeded) {
+        selection = navigator.bluetooth.requestDevice({ filters: [{ name: saved.name }], optionalServices });
+      } else if (saved && typeof navigator.bluetooth.getDevices === 'function') {
         stage = 'saved-device lookup';
         this.log({ kind: 'reconnect', message: 'Looking up the saved bike among browser-authorized devices.' });
         selection = navigator.bluetooth.getDevices().then(devices => {
-          const matching = devices.find(d => d.id === saved.id);
-          if (!matching) throw new DOMException('Saved bike is not authorized here. Use Choose another bike to grant access again.', 'NotFoundError');
-          return matching;
+          const matching = saved.id ? devices.find(d => d.id === saved.id) : undefined;
+          if (matching) return matching;
+          const byName = saved.name ? devices.filter(d => d.name === saved.name) : [];
+          if (byName.length === 1) {
+            this.log({ kind: 'reconnect', message: 'Identifier changed; reconnecting to the only authorized device with the saved name.' });
+            return byName[0];
+          }
+          throw new DOMException(byName.length > 1 ? 'Several authorized bikes share the saved name. Tap Reconnect saved bike again to choose, or use Choose another bike.' : 'Saved bike is not authorized here. Tap Reconnect saved bike again for a name-filtered picker, or use Choose another bike.', 'NotFoundError');
+        }).catch(error => {
+          // A new click is needed for the picker after this asynchronous lookup.
+          this.savedPickerNeeded = true;
+          throw error;
         });
       } else if (saved?.name) {
         // Synchronous picker invocation preserves the user gesture on browsers without getDevices.
@@ -102,6 +114,7 @@ export class BluetoothBike extends BaseAdapter {
       const server = await device.gatt.connect();
       if (session !== this.session) { device.gatt.disconnect(); return; }
       this.preferredDevice = device;
+      this.savedPickerNeeded = false;
       const remembered = saveBike({ id: device.id, name: device.name, extraServices, resistanceFormat: this.resistanceFormat });
       this.emit({ status: 'connected', sample: { timestamp: 0 }, notice: remembered ? 'Bike remembered on this browser. Use Reconnect saved bike next time.' : 'Bike connected. Browser storage is unavailable; the preference could not be saved.' });
       stage = 'service discovery';

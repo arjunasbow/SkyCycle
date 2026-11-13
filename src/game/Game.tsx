@@ -9,7 +9,7 @@ import { enterFlightFullscreen } from './display';
 import { roadCameraPose } from './road-camera';
 import { initialRace, stepRace, racePose, racePosition, raceGuidance, ROAD_LENGTH, type RaceDifficulty } from './race';
 import { HitAudio } from './hit-audio';
-import { ScreenAwakeController, type AwakeState } from './wake-lock';
+import { awakeStatusLabel, ScreenAwakeController, type AwakeState } from './wake-lock';
 type PassNotice = { sequence: number; text: string };
 type PlayStatus = 'ready' | 'running' | 'paused' | 'finished';
 type Mode = 'scenic' | 'arcade';
@@ -61,9 +61,11 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
   useEffect(() => {
     let mounted = true;
     const controller = new ScreenAwakeController(next => { if (mounted) setAwake(next); });
-    if (keepAwake && status === 'running') void controller.start();
+    const request = () => { if (keepAwake && status === 'running' && document.visibilityState !== 'hidden') void controller.start(); };
+    if (keepAwake && status === 'running') request();
     else setAwake({ kind: 'off', message: 'Keep-awake is off while paused or disabled.' });
-    return () => { mounted = false; controller.stop(); };
+    document.addEventListener('visibilitychange', request);
+    return () => { mounted = false; document.removeEventListener('visibilitychange', request); controller.stop(); };
   }, [keepAwake, status]);
   const toggleFullscreen = async () => {
     if (immersive) { setImmersive(false); setDisplayMessage(''); if (document.fullscreenElement === workspace.current) { try { await document.exitFullscreen(); } catch { /* Page mode already exited. */ } } return; }
@@ -231,7 +233,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
   const freshValue = (v: number | undefined, at: number | undefined) => v !== undefined && Date.now() - (at ?? state.sample.timestamp) < 3000 && ['simulated', 'connected'].includes(state.status) ? Math.round(v) : '—';
   const effortUnit = state.sample.watts === undefined && state.sample.cadence !== undefined ? 'RPM' : 'W';
   const suggestedEffort = Math.round((effortUnit === 'RPM' ? calibration.referenceCadence : calibration.referenceWatts) * stats.effortHint / calibration.gain);
-  const awakeLabel = awake.kind === 'active' ? 'AWAKE' : awake.kind === 'off' ? 'AWAKE OFF' : awake.kind === 'requesting' ? 'WAKE REQUEST' : 'SLEEP POSSIBLE';
+  const awakeLabel = awakeStatusLabel(keepAwake, status, awake);
   return <section ref={workspace} className={`flight-workspace ${immersive ? 'immersive' : ''} ${environment === 'space' ? 'space-theme' : isRoad ? 'road-theme' : ''}`}>
     <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary" onClick={() => changeEnvironment(environment === 'valley' ? 'space' : environment === 'space' ? 'road' : 'valley')}>{isRoad ? 'World: Road race' : environment === 'space' ? 'World: Space' : 'World: Valley'}</button><button className="secondary sound-toggle" aria-pressed={sound} onClick={toggleSound}>{sound ? 'Sound on' : 'Sound off'}</button><button className="secondary fullscreen-toggle" onClick={() => void toggleFullscreen()}>{immersive ? 'Exit full screen' : 'Full screen'}</button><button disabled={isRoad} className="secondary steering-switch" aria-pressed={assisted} onClick={() => setAssisted(!assisted)}>{isRoad || assisted ? 'Auto-steering on' : 'Manual steering'}</button><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
     <div className="flight-view"><div className="scene-host" ref={host}/>

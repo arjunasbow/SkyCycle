@@ -3,6 +3,34 @@ import { roadX, roadHeight, roadHeading, roadGrade, ROAD_LENGTH, type RaceState 
 import type { Quality } from './world';
 import { sceneryRandom } from './enhanced-valley';
 import { createCyclingRig } from './cycling-rig';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import signTypeface from 'three/examples/fonts/helvetiker_regular.typeface.json';
+
+const signFont = new FontLoader().parse(signTypeface);
+const signMessages = [
+  ['RIVER LOOP', 'Enjoy the ride'], ['PINE WOODS', 'Find your rhythm'],
+  ['VALLEY VIEW', 'Keep rolling'], ['ALPINE WAY', 'Breathe easy'],
+  ['RIVER AHEAD', 'Bridge 200 m'], ['STONE BRIDGE', 'River crossing'],
+  ['MEADOW LANE', 'Nice and steady'], ['HILL VILLAGE', 'Take in the view'],
+  ['SUMMIT ROAD', 'You have got this'], ['HOMEWARD', 'Stay with the pack'],
+  ['OLD VILLAGE', 'Keep it smooth'], ['OPEN FIELDS', 'Room to breathe'],
+  ['RIVER LOOP', 'Round we go'],
+];
+
+function signLettering(lines: string[], material: THREE.Material) {
+  const lettering = new THREE.Group(); lettering.name = 'sign-lettering';
+  lines.forEach((line, index) => {
+    const geometry = new THREE.ShapeGeometry(signFont.generateShapes(line, index === 0 ? .36 : .22), 2);
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox!, width = bounds.max.x - bounds.min.x;
+    geometry.translate(-(bounds.min.x + bounds.max.x) / 2, -bounds.min.y, 0);
+    const text = new THREE.Mesh(geometry, material);
+    text.scale.setScalar(Math.min(1, 3.5 / width));
+    text.position.set(0, index === 0 ? .12 : -.34, .086);
+    lettering.add(text);
+  });
+  return lettering;
+}
 
 const CHUNK_LENGTH = 200;
 export const roadSceneryBudget = { low: { trees: 14, flowers: 0, terrain: 20 }, medium: { trees: 24, flowers: 24, terrain: 28 }, high: { trees: 36, flowers: 48, terrain: 36 } };
@@ -101,9 +129,13 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
       const d = start + random() * CHUNK_LENGTH, offset = (i % 2 ? -1 : 1) * (7.6 + random() * 1);
       put('detail-flowers', rock, green, d, offset, roadHeight(d) + .45, .28, .5, .28, i % 2 ? 0xecc75e : 0xd6b8d4);
     }
-    put('sign-post', box, stone, start + 65, -9, roadHeight(start + 65) + 1.5, .15, 3, .15);
-    put('road-sign', box, dark, start + 65, -9, roadHeight(start + 65) + 3, 2.1, 1.1, .15);
-    put('sign-chevron', box, cream, start + 65, -9, roadHeight(start + 65) + 3, 1.2, .2, .18);
+    const signD = start + 65, signY = roadHeight(signD);
+    // The support ends exactly at the bottom edge of the board.
+    put('sign-post', box, stone, signD, -10, signY + 1.375, .15, 2.75, .15);
+    put('road-sign', box, dark, signD, -10, signY + 3.4, 4.2, 1.3, .15);
+    const lettering = signLettering(signMessages[chunk % signMessages.length], cream);
+    lettering.position.set(roadX(signD) - 10, signY + 3.4, 110 - signD);
+    lettering.rotation.y = -roadHeading(signD); group.add(lettering);
     if ([2, 7, 10].includes(chunk)) for (let i = 0; i < 4; i++) {
       const d = start + 30 + i * 36, offset = i % 2 ? -33 : 35, y = terrainY(offset, d), s = 7 + i % 2 * 2;
       put('chalets', box, plaster, d, offset, y + s * .5, s * 1.4, s, s);

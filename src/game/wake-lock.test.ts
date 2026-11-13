@@ -1,8 +1,17 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { ScreenAwakeController } from './wake-lock';
+import { awakeStatusLabel, ScreenAwakeController } from './wake-lock';
 afterEach(() => vi.unstubAllGlobals());
 function setup(navigator: object) { vi.stubGlobal('navigator', navigator); vi.stubGlobal('document', { visibilityState: 'visible' }); const notify = vi.fn(); return { controller: new ScreenAwakeController(notify), notify }; }
 function sentinel() { return Object.assign(new EventTarget(), { release: vi.fn().mockResolvedValue(undefined) }); }
+it('distinguishes an enabled preference from an active, paused or unavailable wake lock', () => {
+  const off = { kind: 'off', message: '' } as const;
+  expect(awakeStatusLabel(true, 'ready', off)).toBe('AWAKE READY');
+  expect(awakeStatusLabel(true, 'paused', off)).toBe('AWAKE PAUSED');
+  expect(awakeStatusLabel(true, 'running', off)).toBe('WAKE REQUEST');
+  expect(awakeStatusLabel(false, 'running', off)).toBe('AWAKE OFF');
+  expect(awakeStatusLabel(true, 'running', { kind: 'active', message: '' })).toBe('AWAKE ON');
+  expect(awakeStatusLabel(true, 'running', { kind: 'released', message: '' })).toBe('SLEEP POSSIBLE');
+});
 it('acquires standard wake lock and releases it on pause/cleanup', async () => {
   const lock = sentinel(), request = vi.fn().mockResolvedValue(lock), { controller, notify } = setup({ wakeLock: { request } });
   await controller.start(); expect(request).toHaveBeenCalledWith('screen'); expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'active' }));

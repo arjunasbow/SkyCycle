@@ -6,6 +6,28 @@ import { roadChunkOffset } from './road';
 import { roadCameraPose } from './road-camera';
 
 describe('Road Race 2.0', () => {
+  it('ends sign supports at the board bottom and places readable lettering in front', () => {
+    const world = createWorld('low', 'road');
+    world.scene.getObjectByName('road-course')!.children.forEach(chunk => {
+      const post = chunk.getObjectByName('sign-post') as THREE.InstancedMesh;
+      const board = chunk.getObjectByName('road-sign') as THREE.InstancedMesh;
+      const postMatrix = new THREE.Matrix4(), boardMatrix = new THREE.Matrix4();
+      post.getMatrixAt(0, postMatrix); board.getMatrixAt(0, boardMatrix);
+      const postPos = new THREE.Vector3(), postScale = new THREE.Vector3(), boardPos = new THREE.Vector3(), boardScale = new THREE.Vector3();
+      postMatrix.decompose(postPos, new THREE.Quaternion(), postScale);
+      boardMatrix.decompose(boardPos, new THREE.Quaternion(), boardScale);
+      expect(postPos.y + postScale.y / 2).toBeCloseTo(boardPos.y - boardScale.y / 2, 4);
+      const lettering = chunk.getObjectByName('sign-lettering')!;
+      expect(lettering.children).toHaveLength(2);
+      lettering.children.forEach(line => {
+        expect(line.position.z).toBeGreaterThan(boardScale.z / 2);
+        const geometry = (line as THREE.Mesh).geometry;
+        geometry.computeBoundingBox();
+        expect((geometry.boundingBox!.max.x - geometry.boundingBox!.min.x) * line.scale.x).toBeLessThanOrEqual(3.51);
+      });
+    });
+    world.dispose();
+  });
   it('shows attacks, recovery, repeated passes and useful separation at comfortable effort', () => {
     const race = initialRace(), ranges = race.riders.map(() => ({ min: Infinity, max: -Infinity, speedMin: Infinity, speedMax: 0, phases: new Set<string>() }));
     let passes = 0; const ahead = race.riders.map(r => r.distance > 0);

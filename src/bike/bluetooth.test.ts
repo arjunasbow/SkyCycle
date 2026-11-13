@@ -102,6 +102,28 @@ describe('read-only Bluetooth lifecycle', () => {
     expect(f.requestDevice).toHaveBeenLastCalledWith(expect.objectContaining({ filters: [{ name: 'PRIVATE NAME' }] }));
     expect(bikeNameInExport(reloaded)).toBe(false);
   });
+  it('reconnects by a unique saved name after an identifier changes and remembers the new identifier', async () => {
+    const f = fixture(), first = new BluetoothBike(); await first.connect(); first.disconnect();
+    f.device.id = 'NEW PRIVATE ID';
+    Object.assign(navigator.bluetooth, { getDevices: vi.fn().mockResolvedValue([{ id: 'OTHER', name: 'Another bike' }, f.device]) });
+    const reloaded = new BluetoothBike(); await reloaded.connect([], false, true);
+    expect(reloaded.getState().status).toBe('connected');
+    expect(reloaded.getSavedBike()?.id).toBe('NEW PRIVATE ID');
+    expect(f.requestDevice).toHaveBeenCalledOnce();
+    expect(reloaded.exportLog()).not.toMatch(/PRIVATE NAME|PRIVATE ID/);
+  });
+  it('requires a fresh picker click when several authorized bikes share the saved name', async () => {
+    const f = fixture(), first = new BluetoothBike(); await first.connect(); first.disconnect();
+    f.device.id = 'NEW PRIVATE ID';
+    Object.assign(navigator.bluetooth, { getDevices: vi.fn().mockResolvedValue([f.device, { id: 'DUPLICATE', name: f.device.name }]) });
+    const reloaded = new BluetoothBike(); await reloaded.connect([], false, true);
+    expect(reloaded.getState().status).toBe('error');
+    expect(reloaded.getState().errorDetail).toContain('Several authorized bikes');
+    expect(f.server.connect).toHaveBeenCalledOnce();
+    await reloaded.connect([], false, true);
+    expect(f.requestDevice).toHaveBeenLastCalledWith(expect.objectContaining({ filters: [{ name: f.device.name }] }));
+    expect(reloaded.getState().status).toBe('connected');
+  });
   it('does not silently choose another authorized device or launch a picker after an async lookup', async () => {
     const f = fixture(), first = new BluetoothBike(); await first.connect(); first.disconnect();
     Object.assign(navigator.bluetooth, { getDevices: vi.fn().mockResolvedValue([{ id: 'OTHER ID' }]) });
