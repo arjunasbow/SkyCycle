@@ -2,6 +2,54 @@ import * as THREE from 'three';
 import type { Quality } from './world';
 import { chamberAt, chapterAt, CHAPTER_LENGTH, corridorRadius, distanceAt, JOURNEY_LENGTH, lotusOpening, routeX, routeY, type FlowState } from './kaleidoscope';
 
+// A broad illuminated band sweeps from the distance toward the rider every four seconds.
+// Smooth chapter gates keep the glass and garden quiet, including chapter transitions.
+export function approachingRingLight(ahead: number, time: number, distance: number, reduced: boolean) {
+  if (reduced) return 0;
+  const phase = ((distance % JOURNEY_LENGTH) + JOURNEY_LENGTH) % JOURNEY_LENGTH;
+  const area = THREE.MathUtils.smoothstep(phase, 0, 90) * (1 - THREE.MathUtils.smoothstep(phase, CHAPTER_LENGTH * 2 - 180, CHAPTER_LENGTH * 2));
+  const centre = 440 - (((time % 4) + 4) % 4) * 140;
+  const envelope = Math.exp(-Math.pow((ahead - centre) / 38, 2));
+  return envelope * area * (1 - chamberAt(distance));
+}
+
+function addParadiseBird(scene: THREE.Scene) {
+  const bird = new THREE.Group(); bird.name = 'kaleidoscope-paradise-bird'; scene.add(bird);
+  const gold = new THREE.MeshBasicMaterial({ color: 0xffce65, side: THREE.DoubleSide });
+  const turquoise = new THREE.MeshBasicMaterial({ color: 0x41e6c6, side: THREE.DoubleSide });
+  const violet = new THREE.MeshBasicMaterial({ color: 0xb986ff, side: THREE.DoubleSide });
+  const rose = new THREE.MeshBasicMaterial({ color: 0xff7eaf, side: THREE.DoubleSide });
+  const bodyGeometry = new THREE.SphereGeometry(1, 12, 8);
+  const body = new THREE.Mesh(bodyGeometry, turquoise); body.scale.set(.38, .38, 1.1); bird.add(body);
+  const head = new THREE.Mesh(bodyGeometry, gold); head.scale.setScalar(.37); head.position.set(0, .28, -1); bird.add(head);
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(.12, .55, 6), gold);
+  beak.rotation.x = -Math.PI / 2; beak.position.set(0, .24, -1.48); bird.add(beak);
+  // Swept feather shapes lie in the flight plane, with a contrasting fan on each wing.
+  const feather = new THREE.Shape(); feather.moveTo(0, 0);
+  feather.bezierCurveTo(.5, -.4, 2.3, -.65, 3.4, 1.35);
+  feather.bezierCurveTo(1.9, .9, .65, 1.3, 0, .55); feather.closePath();
+  const wingGeometry = new THREE.ShapeGeometry(feather, 10); wingGeometry.rotateX(Math.PI / 2);
+  const wings: THREE.Group[] = [];
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Group(); wing.scale.x = side; wings.push(wing); bird.add(wing);
+    for (let j = 0; j < 3; j++) {
+      const plume = new THREE.Mesh(wingGeometry, [violet, rose, gold][j]);
+      plume.scale.setScalar(1 - j * .18); plume.position.set(0, j * .025, j * .18); wing.add(plume);
+    }
+  }
+  const tail = new THREE.Group(); tail.name = 'paradise-tail'; bird.add(tail);
+  const tailShape = new THREE.Shape(); tailShape.moveTo(0, 0);
+  tailShape.bezierCurveTo(-.45, 1.5, -.55, 4.3, 0, 5.6);
+  tailShape.bezierCurveTo(.55, 4.3, .45, 1.5, 0, 0);
+  const tailGeometry = new THREE.ShapeGeometry(tailShape, 12); tailGeometry.rotateX(Math.PI / 2);
+  for (let j = 0; j < 5; j++) {
+    const plume = new THREE.Mesh(tailGeometry, [turquoise, violet, gold, rose, turquoise][j]);
+    plume.position.set((j - 2) * .13, -.08 - Math.abs(j - 2) * .025, .65);
+    plume.rotation.y = (j - 2) * .15; plume.scale.set(.65, 1, 1 - Math.abs(j - 2) * .12); tail.add(plume);
+  }
+  return { bird, wings, tail };
+}
+
 const palettes = [0x38eadc, 0xc07bff, 0x58bfff, 0xff9fbb];
 /** Fixed instance pools follow an infinite, deterministic route; no runtime mesh creation. */
 export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
@@ -50,10 +98,23 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
   const mandala = new THREE.Group(); mandala.name = 'kaleidoscope-mandala'; scene.add(mandala);
   const mandalaGeo = new THREE.TorusGeometry(1, .012, 4, 8), mandalaMat = new THREE.MeshBasicMaterial({ color: 0xffbf79 });
   for (let i = 0; i < 12; i++) { const m = new THREE.Mesh(mandalaGeo, mandalaMat); m.scale.setScalar(38 + i * 4); m.rotation.z = i * .19; mandala.add(m); }
-  const trail = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshBasicMaterial({ color: 0x99fff0 }), 32);
-  trail.name = 'kaleidoscope-trail'; trail.frustumCulled = false; scene.add(trail);
-  const companions = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: 0xffe4b2 }), 18);
-  companions.name = 'kaleidoscope-companions'; companions.frustumCulled = false; scene.add(companions);
+  const { bird, wings, tail } = addParadiseBird(scene);
+  // Distant shell: fixed, deterministic points outside the entire playable corridor.
+  // Following translation only gives a stable celestial backdrop without a recycling seam.
+  const starCount = quality === 'low' ? 450 : quality === 'medium' ? 800 : 1200;
+  const starPositions = new Float32Array(starCount * 3), starColours = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i++) {
+    const y = 1 - 2 * (i + .5) / starCount, angle = i * 2.399963229728653;
+    const radius = 1200 + (i % 17) * 19, circle = Math.sqrt(1 - y * y);
+    starPositions.set([Math.cos(angle) * circle * radius, y * radius, Math.sin(angle) * circle * radius], i * 3);
+    const brightness = .35 + (i % 7) * .09;
+    starColours.set([brightness * .85, brightness * .92, brightness], i * 3);
+  }
+  const starGeometry = new THREE.BufferGeometry();
+  starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+  starGeometry.setAttribute('color', new THREE.BufferAttribute(starColours, 3));
+  const stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({ size: 1.5, sizeAttenuation: false, vertexColors: true, fog: false, depthWrite: false }));
+  stars.name = 'kaleidoscope-starfield'; stars.frustumCulled = false; scene.add(stars);
   function colour(d: number, time: number, charge: number, reduced: boolean) {
     const chapter = chapterAt(d), blend = THREE.MathUtils.smoothstep(d % CHAPTER_LENGTH, CHAPTER_LENGTH - 180, CHAPTER_LENGTH);
     tint.setHex(palettes[chapter]); secondary.setHex(palettes[(chapter + 1) % 4]); tint.lerp(secondary, blend);
@@ -63,7 +124,7 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
   function place(x: number, y: number, z: number, sx: number, sy = sx, sz = sx) {
     dummy.position.set(x, y, z); dummy.scale.set(sx, sy, sz); dummy.rotation.set(0, 0, 0);
   }
-  const batches = [rings, frames, glass, ribbons, lights, trail, companions];
+  const batches = [rings, frames, glass, ribbons, lights];
   return { update(time: number, bike: THREE.Vector3, flow: FlowState, reduced: boolean) {
     const distance = distanceAt(bike.z), first = Math.floor((distance - 60) / 5) * 5;
     glassMaterial.uniforms.time.value = reduced ? 0 : time;
@@ -86,7 +147,9 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
       place(x, y, z, sparse ? .001 : radius + ripple + wave * 2);
       dummy.rotation.y = -Math.atan2(routeX(d + 1) - x, 1);
       dummy.rotation.x = Math.atan2(routeY(d + 1) - y, 1);
-      dummy.updateMatrix(); rings.setMatrixAt(i, dummy.matrix); colour(d, time, flow.charge, reduced); tint.lerp(secondary.setHex(0xf1ffed), (ripple + wave) * .3); rings.setColorAt(i, tint);
+      dummy.updateMatrix(); rings.setMatrixAt(i, dummy.matrix); colour(d, time, flow.charge, reduced); const incoming = approachingRingLight(d - distance, time, d, reduced);
+      tint.multiplyScalar(1 - .42 * (chapter < 2 ? 1 : 0));
+      tint.lerp(secondary.setHex(0xf1ffed), Math.min(.9, (ripple + wave) * .3 + incoming * .85)); rings.setColorAt(i, tint);
       dummy.scale.setScalar(sparse ? .001 : radius * (chapter === 1 ? 1.16 : 1.5));
       dummy.rotation.z = reduced ? d * .002 : d * .004 + time * (chapter === 1 ? .12 : .035);
       dummy.updateMatrix(); frames.setMatrixAt(i, dummy.matrix); tint.multiplyScalar(chapter === 1 ? .7 : .24); frames.setColorAt(i, tint);
@@ -113,14 +176,14 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
     const chamberDistance = Math.floor((distance + 250) / JOURNEY_LENGTH) * JOURNEY_LENGTH + 1380;
     mandala.position.set(routeX(chamberDistance) + 105, routeY(chamberDistance) + 32, 110 - chamberDistance);
     mandala.rotation.z = reduced ? 0 : time * .035;
-    trail.visible = flow.charge >= 5; companions.visible = flow.charge >= 15;
-    for (let i = 0; i < 32; i++) {
-      const t = i / 31; place(bike.x + Math.sin(i * .4) * .3, bike.y + 2.5, bike.z + 3 + t * 20, (1 - t) * .24); dummy.updateMatrix(); trail.setMatrixAt(i, dummy.matrix);
-    }
-    for (let i = 0; i < 18; i++) {
-      const d = distance + 45 + i * 2, a = i * .45 + (reduced ? 0 : time * .2);
-      place(routeX(d) + Math.cos(a) * 6, routeY(d) + Math.sin(a) * 4, 110 - d, .65, .15, 1.8); dummy.rotation.z = a; dummy.updateMatrix(); companions.setMatrixAt(i, dummy.matrix);
-    }
+    stars.position.copy(bike);
+    // Always present, including outside the tunnel: a companion rather than another target.
+    const glide = reduced ? 0 : Math.sin(time * .85);
+    bird.position.set(bike.x + 4.5 + (reduced ? 0 : Math.sin(time * .32) * 1.1), bike.y + 5.3 + glide * .85, bike.z - 9);
+    bird.rotation.set(reduced ? 0 : Math.cos(time * .85) * .065, -Math.atan2(routeX(distance + 20) - routeX(distance), 20), reduced ? 0 : Math.sin(time * .32) * .1);
+    wings[0].rotation.z = reduced ? -.06 : -.06 + Math.sin(time * 1.5) * .09;
+    wings[1].rotation.z = -wings[0].rotation.z;
+    tail.rotation.x = reduced ? 0 : Math.sin(time * .85 - .8) * .07;
     for (const batch of batches) { batch.instanceMatrix.needsUpdate = true; if (batch.instanceColor) batch.instanceColor.needsUpdate = true; }
   } };
 }
