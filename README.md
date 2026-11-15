@@ -231,7 +231,7 @@ Five seconds of charge brings richer rings; fifteen adds flowing ribbons; thirty
 
 Validation: `npm test` (88 passing tests), `npm run build`, and `npm run deploy:check`. New coverage checks curved boundaries/hysteresis, timed scores and multipliers, brief/sustained excursions, re-entry, pause/frame gaps/stale input, a 400-second following simulation with modest continuous effort, chapter continuity, guaranteed lotus opening/bonuses, and bounded scene pools with complete attached-resource disposal at all three qualities, followed by rebuilding the existing worlds. These are CPU/software checks, not GPU or phone benchmarks.
 
-Browser visual inspection could not run because the browser access host and native computer-use pipe were unavailable. All chapters, above/below riding, Low quality, transparency/shader appearance, world switching in the live UI, sustained renderer memory and frame rate still need visual review. No iPhone/Bluefy/YESOUL/mirrored-display or thermal validation was performed. A procedural bird of paradise replaces the dotted trail and abstract diamond companions. Its swept colourful wings and long feather fan glide beside and ahead of the bicycle, gently rising and falling with it even outside the corridor. Neon Passage and Funhouse receive a broad sequential ring-light wave travelling toward the rider every four seconds, fading out around chambers and the quieter Glass/Garden chapters. A distant, quality-scaled starfield remains visible beyond the tunnel. Reduced effects stops the bird’s decorative motion and approaching light waves, while retaining the bird and stars. These changes do not add audio or alter scoring, flight physics or bike input.
+Browser visual inspection could not run because the browser access host and native computer-use pipe were unavailable. All chapters, above/below riding, Low quality, transparency/shader appearance, world switching in the live UI, sustained renderer memory and frame rate still need visual review. No iPhone/Bluefy/YESOUL/mirrored-display or thermal validation was performed. A procedural bird of paradise replaces the dotted trail and abstract diamond companions. Its swept colourful wings and long feather fan glide beside and ahead of the bicycle, gently rising and falling with it. It now arrives as a reward after 30 continuous seconds inside the corridor, flies away on exit, and requires a new 30-second streak to return. Neon Passage and Funhouse receive a broad sequential ring-light wave travelling toward the rider every four seconds, fading out around chambers and the quieter Glass/Garden chapters. A distant, quality-scaled starfield remains visible beyond the tunnel. Reduced effects stops the bird’s decorative motion and approaching light waves, while retaining the earned bird and stars. These changes do not add audio or alter scoring, flight physics or bike input.
 
 ### Kaleidoscope visual refinements
 
@@ -278,9 +278,9 @@ Choose **World: Road race** and **Flight settings > Graphics style > Cinematic �
 The package adds:
 
 - Shared detailed bikes: smooth frames and riders, spoked wheels/hubs, drop handlebars, brake levers/cables, saddle, chainring/cassette/chain, bottle and team accents. Shoes, knees, cranks and wheels animate independently on all six riders; attacks add a small posture change. Static parts merge by material to bound draw calls.
-- Mixed layered conifers and clustered broadleaf trees, branches, bushes, swaying grass, five-petal flowers, crop rows and grassier, less rocky hills. Decorative verge rocks and river stones are omitted.
+- Mixed layered conifers and clustered broadleaf trees, branches, bushes, five-petal flowers, crop rows and grassier, less rocky hills. Decorative verge rocks and river stones are omitted.
 - Detailed chalet villages with foundations, roof tile/ridge lines, framed windows/crossbars, shutters, timber beams, doors, balconies/balusters, flower boxes, chimney caps, garden paths and mailboxes. A village tower adds a distant landmark.
-- A real arched bridge profile, stone joints/caps, reeds and a flowing stream with native TSL water shading. Asphalt receives native TSL grain, surface patches and subtle canopy patterns; existing road markings, fences, reflectors and readable signs remain.
+- A real arched bridge profile, stone joints/caps and a flowing stream with native TSL water shading. Asphalt receives native TSL grain, surface patches and subtle canopy patterns; existing road markings, fences, reflectors and readable signs remain.
 - A gradient daylight sky, layered clouds, warm sun, atmospheric depth and soft contact shadows. Medium/High enable bounded scenery shadow maps, refreshed only periodically/as the camera moves; Low uses contact shadows and simplified lighting. Restrained daylight bloom has a hard contribution cap of 0.003 linear RGB per channel.
 
 Reduced effects freezes wind, water and decorative cloud movement. Quality controls vegetation/terrain/model detail; adaptive rendering resolution remains active. All scenery is procedural and chunk-recycled, without external asset downloads. Valley, Space, Standard Road and Kaleidoscope keep their existing visual paths.
@@ -291,9 +291,9 @@ Validation: **112 tests pass**, production build, deployment dry run and diff ch
 
 | Quality | Whole-scene triangles | Instance batches | Instances | Unique geometries |
 | --- | ---: | ---: | ---: | ---: |
-| Low | 260,733 | 320 | 5,642 | 84 |
-| Medium | 592,886 | 320 | 9,290 | 84 |
-| High | 828,485 | 320 | 12,774 | 84 |
+| Low | 259,775 | 306 | 5,163 | 83 |
+| Medium | 590,628 | 306 | 8,161 | 83 |
+| High | 824,537 | 306 | 10,800 | 83 |
 
 These are scene inventories, not live GPU draw counts or phone benchmarks. The script without `--cinematic` retains the Standard inventory and the same reproducible race outcomes.
 
@@ -308,3 +308,11 @@ The detailed rider now uses the correct forward crank phase, and both road style
 World/quality/graphics switches now dispose scene materials and geometries while the renderer caches are still alive, then release postprocessing and the renderer. The previous active-session cleanup reversed that order; Three.js WebGPU material-disposal listeners could then access a deleted node-builder state and throw during React effect cleanup, blanking the interface. A once-only disposer is shared by active cleanup, cancelled compilation and failed startup. Cleanup exceptions are contained and all Cinematic resource releases are attempted, including the renderer.
 
 Validation: 117 tests, build and deployment dry run pass. A GPU-free regression test reproduces the actual Three.js node-cache exception with renderer-first disposal and verifies scene-first disposal. Additional tests cover repeated Road/Kaleidoscope/Valley/Space releases, late cancellation, idempotence and postprocessing failure without skipping renderer release. On-device switching still needs phone confirmation.
+
+### Clearer verges and earned bird companion
+
+Cinematic Road omits the small triangular grass tufts and riverbank reeds, retaining flowers, bushes, signs and seeded scenery placement. This removes 14 instance batches and 1,974 instances at High quality; the table above reflects the current geometry inventory.
+
+Kaleidoscope’s bird starts hidden. After 30 uninterrupted seconds in the tunnel it glides in from ahead and to the side, then follows the bicycle. Exiting starts its departure immediately; returning requires a fresh 30-second streak, independently of scoring’s grace period. Reduced effects uses an immediate appearance/departure. Pause freezes the entrance/exit animation and restarting hides the bird. Cinematic precompiles the hidden bird’s materials before the ride. Scoring, input and the other worlds are unchanged.
+
+Validation: 118 tests, production build and Cloudflare deployment dry run pass. Regression coverage includes the initial delay, departure, fresh streak, pause and restart, plus absence of triangular road decoration. Appearance and performance still require on-device review.

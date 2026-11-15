@@ -110,7 +110,11 @@ export async function createCinematic(quality: Quality, environment: Environment
       // Keep the scene alpha rather than adding the bloom texture's alpha to it.
       const halo = glow.rgb.min(vec3(CINEMATIC_LIGHTING.maxHalo));
       post = new PostProcessing(renderer); post.outputNode = vec4(beauty.rgb.add(halo), beauty.a);
-      await renderer.compileAsync(scene, camera);
+      // Warm the reward bird before hiding it so its first entrance need not compile materials.
+      const rewardBird = scene.getObjectByName('kaleidoscope-paradise-bird'), birdWasVisible = rewardBird?.visible;
+      if (rewardBird) rewardBird.visible = true;
+      try { await renderer.compileAsync(scene, camera); }
+      finally { if (rewardBird) rewardBird.visible = birdWasVisible!; }
       // Compile the post stack too while the ride is still on its loading screen.
       post.render();
     },

@@ -98,7 +98,8 @@ it('sends broad ring highlights toward the rider every four seconds only in neon
   expect(approachingRingLight(300, 1, 400, true)).toBe(0);
 });
 it('replaces the dotted trail with a gliding bird and a stable exterior starfield', () => {
-  const world = createWorld('low', 'kaleidoscope'), flow = initialFlow();
+  const world = createWorld('low', 'kaleidoscope'), flow = initialFlow(); flow.streak = 30; flow.charge = 30;
+  world.updateTunnel!(0, flow, true);
   const bird = world.scene.getObjectByName('kaleidoscope-paradise-bird')!;
   const stars = world.scene.getObjectByName('kaleidoscope-starfield') as THREE.Points;
   expect(world.scene.getObjectByName('kaleidoscope-trail')).toBeUndefined();
@@ -128,5 +129,27 @@ it('actually brightens successive nearer ring instances as a light wave approach
   world.updateTunnel!(2, flow, false);
   rings.getColorAt(72, far); rings.getColorAt(44, near);
   expect(near.r + near.g + near.b).toBeGreaterThan(far.r + far.g + far.b);
+  world.dispose();
+});
+
+it('flies the bird in only after thirty continuous seconds and requires a fresh streak after leaving', () => {
+  const world = createWorld('low', 'kaleidoscope'), flow = initialFlow(), s = pose();
+  const bird = world.scene.getObjectByName('kaleidoscope-paradise-bird')!;
+  const tick = (seconds: number, outside = false) => {
+    s.y = routeY(0) - 3.2 + (outside ? 40 : 0);
+    for (let i = 0; i < Math.round(seconds * 60); i++) { s.elapsed += 1 / 60; stepFlow(flow, s, 1 / 60); }
+    world.updateTunnel!(s.elapsed, flow, false);
+  };
+  world.updateTunnel!(0, flow, false); expect(bird.visible).toBe(false);
+  tick(29.9); expect(bird.visible).toBe(false);
+  tick(.2); expect(bird.visible).toBe(true);
+  for (let i = 0; i < 21; i++) tick(.1);
+  expect(bird.position.x - world.bike.position.x).toBeLessThan(7);
+  const settled = bird.position.x; tick(.1, true); expect(bird.position.x).toBeGreaterThan(settled);
+  for (let i = 0; i < 11; i++) tick(.1, true);
+  expect(bird.visible).toBe(false);
+  tick(29); expect(bird.visible).toBe(false); tick(1.1); expect(bird.visible).toBe(true);
+  const position = bird.position.clone(); stepFlow(flow, s, 1 / 60, false); world.updateTunnel!(s.elapsed, flow, false); expect(bird.position).toEqual(position);
+  world.updateTunnel!(0, initialFlow(), false); expect(bird.visible).toBe(false);
   world.dispose();
 });
