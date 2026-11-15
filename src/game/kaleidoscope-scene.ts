@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { companionOffset } from './companion-motion';
 import type { Quality } from './world';
 import { addParadiseBird } from './paradise-bird';
 import { addLotusHeart } from './lotus-heart';
@@ -81,6 +82,7 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
   const { bird, wings, tail } = addParadiseBird(scene, quality);
   bird.visible = false;
   bird.traverse(object => { object.frustumCulled = false; });
+  const birdOffset = new THREE.Vector3();
   let birdPresence = 0, previousBirdTime = 0;
   const beacons = new THREE.InstancedMesh(new THREE.SphereGeometry(.18, 8, 6), new THREE.MeshBasicMaterial({ color: 0x4b9b9c }), 48);
   beacons.name = 'mandala-route-beacons'; beacons.frustumCulled = false; scene.add(beacons);
@@ -172,13 +174,15 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
     const birdDt = Math.max(0, Math.min(.1, time - previousBirdTime)); previousBirdTime = time;
     birdPresence = reduced ? (earnedBird ? 1 : 0) : THREE.MathUtils.clamp(birdPresence + birdDt * (earnedBird ? .5 : -1), 0, 1);
     bird.visible = birdPresence > .001;
-    const arriving = 1 - THREE.MathUtils.smoothstep(birdPresence, 0, 1);
-    const glide = reduced ? 0 : Math.sin(time * .85);
-    bird.position.set(bike.x + 4.5 + (reduced ? 0 : Math.sin(time * .32) * 1.1) + arriving * 24, bike.y + 5.3 + glide * .85 + arriving * 9, bike.z - 9 - arriving * 28);
-    bird.rotation.set(reduced ? 0 : Math.cos(time * .85) * .065, -Math.atan2(routeX(distance + 20) - routeX(distance), 20), reduced ? 0 : Math.sin(time * .32) * .1);
-    wings[0].rotation.z = reduced ? -.06 : -.06 + Math.sin(time * 1.5) * .09;
+    const t = reduced ? 0 : time;
+    companionOffset(birdOffset,birdPresence,time,reduced,5.3);
+    const heading = Math.atan2(routeX(distance + 20) - routeX(distance), 20);
+    bird.position.set(bike.x + Math.cos(heading)*birdOffset.x-Math.sin(heading)*birdOffset.z,bike.y+birdOffset.y,bike.z+Math.sin(heading)*birdOffset.x+Math.cos(heading)*birdOffset.z);
+    bird.rotation.set(Math.cos(t*1.8)*.09,-heading+Math.sin(t*.7)*.2,Math.cos(t*.7)*.16);
+    const flap = reduced ? 0 : Math.sin(t*10)*(.18+.22*Math.max(0,Math.sin(t*.9)));
+    wings[0].rotation.z = -.06 + flap;
     wings[1].rotation.z = -wings[0].rotation.z;
-    tail.rotation.x = reduced ? 0 : Math.sin(time * .85 - .8) * .07;
+    tail.rotation.x = reduced ? 0 : Math.sin(t*1.8-.8)*.14;
     for (const batch of batches) { batch.instanceMatrix.needsUpdate = true; if (batch.instanceColor) batch.instanceColor.needsUpdate = true; }
   }, dispose() { encounterScenery.dispose(); } };
 }

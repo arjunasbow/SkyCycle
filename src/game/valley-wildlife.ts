@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { companionOffset } from './companion-motion';
 import type { Quality } from './world';
 import type { ValleyCompanionState } from './valley-companion';
 
@@ -66,16 +67,17 @@ export function addValleyWildlife(scene: THREE.Scene, quality: Quality) {
     }
   }
   const retained=new Set<THREE.BufferGeometry>();scene.traverse(object=>{if(object instanceof THREE.Mesh)retained.add(object.geometry);});oldGeometries.forEach(geo=>{if(!retained.has(geo))geo.dispose();});
+  const offset = new THREE.Vector3();
   let presence = 0, previousTime = 0;
   return { reset() { presence = 0; previousTime = 0; bird.visible = false; }, update(time: number, bike: THREE.Group, state: ValleyCompanionState, reduced: boolean) {
     if (time < previousTime || time === 0) presence = 0;
     const dt = Math.max(0, Math.min(.1, time - previousTime)); previousTime = time;
     presence = reduced ? (state.earned ? 1 : 0) : THREE.MathUtils.clamp(presence + dt * (state.earned ? .5 : -1), 0, 1);
     bird.visible = presence > .001;
-    const away = 1 - THREE.MathUtils.smoothstep(presence, 0, 1), t = reduced ? 0 : time;
-    const x = 4.4 + Math.sin(t * .7) * 1.5 + away * 25, z = -6 + Math.sin(t * .43) * 2 - away * 22;
+    const t = reduced ? 0 : time;
+    companionOffset(offset,presence,time,reduced);
     const heading = -bike.rotation.y;
-    bird.position.set(bike.position.x + Math.cos(heading) * x - Math.sin(heading) * z, bike.position.y + 4.8 + Math.sin(t * 1.8) * .7 + Math.sin(t * .41) * .6 + away * 10, bike.position.z + Math.sin(heading) * x + Math.cos(heading) * z);
+    bird.position.set(bike.position.x + Math.cos(heading) * offset.x - Math.sin(heading) * offset.z, bike.position.y + offset.y, bike.position.z + Math.sin(heading) * offset.x + Math.cos(heading) * offset.z);
     bird.rotation.set(Math.cos(t * 1.8) * .09, -heading + Math.sin(t * .7) * .2, Math.cos(t * .7) * .16);
     const flap = reduced ? 0 : Math.sin(t * 14) * (.20 + .35 * Math.max(0, Math.sin(t * .9)));
     wings[0].rotation.z = -.12 + flap; wings[1].rotation.z = .12 - flap;

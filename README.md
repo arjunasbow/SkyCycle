@@ -239,7 +239,7 @@ The bird/light-wave/starfield revision passes 88 tests, the production build and
 
 ## Cinematic WebGPU experiment
 
-In **World: Valley**, **World: Kaleidoscope** or **World: Road race**, open **Flight settings > Graphics style > Cinematic · WebGPU experiment**. This is an opt-in, remembered graphics preference. Standard WebGL remains the default. Space continues using it. Valley now also supports Cinematic. Changing graphics restarts the ride; select Standard to compare or return. The footer shows the actual active backend: **WebGPU · CINEMATIC** or **WebGL**. A loading state prevents starting until graphics is prepared. Unsupported adapters, initialization/scene preparation failures and device loss return to Standard with a visible notice and Retry Cinematic control.
+In any world, open **Flight settings > Graphics style > Cinematic · WebGPU experiment**. This is an opt-in, remembered graphics preference. Standard WebGL remains the default. All four worlds now support Cinematic, with Standard available for comparison. Changing graphics restarts the ride; select Standard to compare or return. The footer shows the actual active backend: **WebGPU · CINEMATIC** or **WebGL**. A loading state prevents starting until graphics is prepared. Unsupported adapters, initialization/scene preparation failures and device loss return to Standard with a visible notice and Retry Cinematic control.
 
 Cinematic uses Three.js r181 WebGPURenderer, TSL materials and node-based bloom. Rings and approaching light bands, lanterns, the bird and lotus edges receive soft HDR glow; fixed translucent light veils add atmosphere to the mandala encounter chamber and recycle across unlimited journeys. Liquid Glass uses an equivalent TSL shader, with simulation-time animation so pause/reduced effects remain meaningful. These are stylised light veils, not volumetric ray marching. Reduced effects freezes shader animation and reduces glow. Bluetooth, audio, routes, scoring and flight physics are unchanged.
 
@@ -340,3 +340,21 @@ Valley now contains a single decorative race scene in both Standard and Cinemati
 Six small cyclists in coloured jerseys pedal along the road, with a leader gaining ground on the climb. Shared geometry and material-grouped static pieces keep their aerial silhouettes inexpensive; wheels and legs animate independently. They cross the finish and leave the scene before the ambient race repeats. Pause freezes the race, reduced effects keeps a still tableau, and unlimited rides reuse the same objects. The vignette adds roughly 11,252 triangles at Low and 14,148 at Medium/High before culling; the current whole-Valley inventory above includes it.
 
 Validation: 130 tests, production build, deployment dry run and diff check pass. Coverage verifies left-to-right routing, bridge height, uphill finish, upward road normals, rider progress and breakaway, pause/reduced effects, fixed object count across long sessions, unchanged targets, and complete resource disposal. Rendered appearance, visibility from the normal flight camera and phone performance still need on-device review.
+
+### Cinematic Space, Sputnik and livelier birds
+
+Space now supports Cinematic WebGPU: smoothly shaded original procedural planetary surfaces (ocean/land/ice and gas bands), native surface detail and restrained rim atmospheres, banded planetary rings with a dark division, relief-cratered moons, smoother asteroids, denser warm-core spiral galaxies and a richer starfield. A detailed articulated cyclist and spoked bicycle retain the rear rocket thrusters. Space keeps its dark background and uses bounded soft bloom without daylight sky, light veils or shadow-map passes. Standard retains the original Space scenery and lighting. No external textures or audio are added.
+
+A small silver Sputnik-inspired companion, with an equatorial seam and four long aerials, joins after 30 active seconds following the ring route. It departs on leaving the route or missing a ring, requiring a fresh streak to return, just like the Valley bird. Pause, reset, course loops, bonus balloon exclusion and Reduced effects follow the existing route companion behavior. It drifts and slowly turns without flashing or beeping. Sputnik is available in Standard as well as Cinematic.
+
+Both birds now arrive from below and to the rider’s right, climb into formation, and veer back down/right on departure. They share one offset function; entrance/departure animation uses simulation time. The bird of paradise now has livelier wingbeats, vertical flitting, banking, forward/back movement and tail motion, while preserving its tunnel reward rules. Reduced effects gives still companions with immediate appearance/departure.
+
+Space whole-scene CPU inventory before culling/preparation:
+
+| Quality | Triangles | Points | Meshes | Geometries |
+| --- | ---: | ---: | ---: | ---: |
+| Low | 92,352 | 7,404 | 330 | 43 |
+| Medium | 139,760 | 13,404 | 330 | 43 |
+| High | 145,776 | 19,704 | 330 | 43 |
+
+Validation: 135 tests, production build, Cloudflare deployment dry run and diff check pass. Added coverage checks lower-right arrival/departure for both birds, Sputnik timing/re-entry/pause/reduced effects/reset, crater relief, detailed rider/retained rockets, native Space material preparation, quality budgets, bounded scene objects and attached-resource disposal. Preparation uses a mocked graphics backend; actual WebGPU rendering and iPhone/Bluefy performance remain to be reviewed on-device. Flight routes, scoring, effort mapping and controls are unchanged.
