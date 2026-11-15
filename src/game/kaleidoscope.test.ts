@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { initialFlight } from './flight';
 import { CHAPTER_LENGTH, FLOW, JOURNEY_LENGTH, chapterAt, corridorRadius, distanceAt, inCorridor, initialFlow, lotusOpening, routeX, routeY, stepFlow, stepTunnel, tunnelHint } from './kaleidoscope';
 import { createWorld } from './world';
+import { approachingRingLight } from './kaleidoscope-scene';
 
 function pose(d = 0) { return { ...initialFlight(), x: routeX(d), y: routeY(d) - 3.2, z: 110 - d }; }
 function advance(flow: ReturnType<typeof initialFlow>, seconds: number, outside = false) {
@@ -85,4 +86,47 @@ it('keeps scene pools bounded across unlimited chapters and disposes all resourc
     expect(valley.targets).toHaveLength(26); expect(space.targets).toEqual(valley.targets); expect(road.targets).toHaveLength(0);
     valley.dispose(); space.dispose(); road.dispose();
   }
+});
+
+it('sends broad ring highlights toward the rider every four seconds only in neon and funhouse', () => {
+  expect(approachingRingLight(300, 1, 400, false)).toBeCloseTo(1);
+  expect(approachingRingLight(160, 2, 400, false)).toBeCloseTo(1);
+  expect(approachingRingLight(20, 3, 400, false)).toBeCloseTo(1);
+  expect(approachingRingLight(300, 2, 400, false)).toBeLessThan(.001);
+  expect(approachingRingLight(300, 5, 900, false)).toBeCloseTo(1);
+  for (const d of [1600, 2000, 2500]) expect(approachingRingLight(300, 1, d, false)).toBe(0);
+  expect(approachingRingLight(300, 1, 400, true)).toBe(0);
+});
+it('replaces the dotted trail with a gliding bird and a stable exterior starfield', () => {
+  const world = createWorld('low', 'kaleidoscope'), flow = initialFlow();
+  const bird = world.scene.getObjectByName('kaleidoscope-paradise-bird')!;
+  const stars = world.scene.getObjectByName('kaleidoscope-starfield') as THREE.Points;
+  expect(world.scene.getObjectByName('kaleidoscope-trail')).toBeUndefined();
+  expect(world.scene.getObjectByName('kaleidoscope-companions')).toBeUndefined();
+  expect(stars.geometry.getAttribute('position').count).toBe(450);
+  expect((stars.material as THREE.PointsMaterial).fog).toBe(false);
+  world.bike.position.set(10, 80, -500); world.updateTunnel!(1, flow, false);
+  expect(bird.visible).toBe(true); expect(bird.position.y).toBeGreaterThan(80);
+  expect(stars.position).toEqual(world.bike.position);
+  const before = bird.position.clone(); world.updateTunnel!(2, flow, false);
+  expect(bird.position.y).not.toBe(before.y);
+  world.bike.position.y -= 40; world.updateTunnel!(2, flow, false);
+  expect(bird.position.y).toBeCloseTo(before.y - 40 + .85 * (Math.sin(1.7) - Math.sin(.85)));
+  world.updateTunnel!(2, flow, true); const still = bird.position.clone();
+  world.updateTunnel!(12, flow, true); expect(bird.position).toEqual(still);
+  world.dispose();
+});
+
+it('actually brightens successive nearer ring instances as a light wave approaches', () => {
+  const world = createWorld('low', 'kaleidoscope'), flow = initialFlow();
+  world.bike.position.set(routeX(400), routeY(400) - 3.2, 110 - 400);
+  const rings = world.scene.getObjectByName('kaleidoscope-rings') as THREE.InstancedMesh;
+  const far = new THREE.Color(), near = new THREE.Color();
+  world.updateTunnel!(1, flow, false);
+  rings.getColorAt(72, far); rings.getColorAt(44, near); // 300 m and 160 m ahead
+  expect(far.r + far.g + far.b).toBeGreaterThan(near.r + near.g + near.b);
+  world.updateTunnel!(2, flow, false);
+  rings.getColorAt(72, far); rings.getColorAt(44, near);
+  expect(near.r + near.g + near.b).toBeGreaterThan(far.r + far.g + far.b);
+  world.dispose();
 });
