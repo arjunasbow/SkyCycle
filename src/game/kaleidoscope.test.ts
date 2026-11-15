@@ -33,6 +33,11 @@ it('freezes every flow field on pause and rejects frame gaps; stale input earns 
   for (let i = 0; i < 240; i++) stepFlow(flow, pose(), 1 / 60, true, false);
   expect(flow.score).toBe(before.score); expect(flow.multiplier).toBe(1);
 });
+it('retains a 3x multiplier when continuous progress crosses 15 seconds after a brief excursion', () => {
+  const flow = initialFlow(); advance(flow, 30); advance(flow, 1, true); advance(flow, 16);
+  expect(flow.multiplier).toBe(3);
+  for (const d of [1380, 2760]) expect(Math.abs(routeY(d + 1) - routeY(d))).toBeLessThan(.011);
+});
 it('supports a full journey at modest continuous effort with the existing flight model', () => {
   const s = initialFlight(), flow = initialFlow(); let inside = 0, min = 2, max = 0;
   for (let i = 0; i < 60 * 400; i++) {

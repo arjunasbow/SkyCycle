@@ -9,14 +9,15 @@ export const distanceAt = (z: number) => 110 - z;
 export function chapterAt(distance: number) { return Math.floor(Math.max(0, distance) / CHAPTER_LENGTH) % 4; }
 export function chamberAt(distance: number) {
   const phase = ((distance % JOURNEY_LENGTH) + JOURNEY_LENGTH) % JOURNEY_LENGTH;
-  // Cosine envelope: broad and level around the two monumental encounters.
+  // Smoothly broaden the corridor around the two monumental encounters.
   const separation = Math.min(Math.abs(phase - 1380), Math.abs(phase - 2760));
   return separation < 210 ? (1 + Math.cos(separation / 210 * Math.PI)) / 2 : 0;
 }
 export function routeX(distance: number) { return Math.sin(distance / 340) * 42 + Math.sin(distance / 810) * 22; }
 export function routeY(distance: number) {
-  // Flat approach to the lotus/chamber; no sudden gradients at chapter boundaries.
-  return 48.2 + Math.sin(distance / JOURNEY_LENGTH * Math.PI * 4) * 10;
+  // Chamber encounters are near the crests, where the route is almost level.
+  const frequency = Math.PI * 4 / JOURNEY_LENGTH;
+  return 48.2 + (Math.cos((distance + 60) * frequency) - Math.cos(60 * frequency)) * 8;
 }
 export const corridorRadius = (distance: number) => 11 + chamberAt(distance) * 7;
 export function inCorridor(s: Pick<FlightState, 'x' | 'y' | 'z'>, wasInside: boolean) {
@@ -54,7 +55,7 @@ export function stepFlow(flow: FlowState, s: FlightState, dt: number, running = 
     flow.outside = 0;
     const before = flow.streak;
     flow.streak += dt; flow.charge = Math.min(30, flow.charge + dt);
-    flow.multiplier = flow.streak + 1e-8 >= FLOW.tripleAt ? 3 : flow.streak + 1e-8 >= FLOW.doubleAt ? 2 : flow.multiplier;
+    flow.multiplier = Math.max(flow.multiplier, flow.streak + 1e-8 >= FLOW.tripleAt ? 3 : flow.streak + 1e-8 >= FLOW.doubleAt ? 2 : 1);
     if (before < 30 && flow.streak >= 30) flow.wave = s.elapsed;
     flow.accumulated += dt;
     if (flow.accumulated + 1e-8 >= FLOW.interval) { flow.accumulated = Math.max(0, flow.accumulated - FLOW.interval); flow.score += FLOW.points * flow.multiplier; }
