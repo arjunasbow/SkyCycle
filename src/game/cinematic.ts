@@ -4,7 +4,8 @@ import { color, float, mix, pass, sin, smoothstep, uniform, uv, vec2, vec3, vec4
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import type { Graphics } from './graphics';
 import { AdaptiveResolution, graphicsPixelCap } from './graphics-settings';
-import type { Quality } from './world';
+import type { Quality, Environment } from './world';
+import { prepareCinematicRoad } from './cinematic-road';
 import { distanceAt, routeX, routeY } from './kaleidoscope';
 import { lotusDistanceAt, lotusGapAt, mandalaDistanceAt } from './mandala-encounter';
 
@@ -14,8 +15,8 @@ export const CINEMATIC_LIGHTING = Object.freeze({
 });
 const colouredBatches = ['kaleidoscope-rings', 'kaleidoscope-frames', 'kaleidoscope-lanterns', 'kaleidoscope-flow-ribbons'];
 
-/** Opt-in WebGPU experiment for Kaleidoscope. Nothing is imported on the standard path. */
-export async function createCinematic(quality: Quality): Promise<Graphics> {
+/** Opt-in WebGPU rendering for Kaleidoscope and Road race. Nothing is imported on the standard path. */
+export async function createCinematic(quality: Quality, environment: Environment = 'kaleidoscope'): Promise<Graphics> {
   if (!('gpu' in navigator)) throw new Error('WebGPU unavailable');
   const renderer = new WebGPURenderer({ antialias: quality === 'high', powerPreference: 'high-performance', alpha: false });
   try {
@@ -31,6 +32,7 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
   let scenePass: ReturnType<typeof pass> | undefined, glow: ReturnType<typeof bloom> | undefined;
   let post: PostProcessing | undefined;
   let atmosphere: THREE.Group | undefined;
+  let roadEffects: ReturnType<typeof prepareCinematicRoad> | undefined;
   const replaced = new Set<THREE.Material>();
   let disposed = false, lost = false;
   let failureHandler: (() => void) | undefined;
@@ -39,6 +41,14 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
     onFailure(handler) { failureHandler = handler; if (lost) handler(); },
     renderer, label: 'WebGPU · CINEMATIC', notice: '',
     async prepare(scene, camera) {
+      if (environment === 'road') {
+        roadEffects = prepareCinematicRoad(scene, renderer, quality, camera, replaced);
+        renderer.toneMappingExposure = 1.0;
+        scenePass = pass(scene, camera); const beauty = scenePass.getTextureNode();
+        glow = bloom(beauty, .04, .2, 1.3);
+        post = new PostProcessing(renderer); post.outputNode = vec4(beauty.rgb.add(glow.rgb.min(vec3(.003))), beauty.a);
+        await renderer.compileAsync(scene, camera); post.render(); return;
+      }
       // Missing instance colours at compilation produce white materials in WebGPU.
       // Fail safely instead of preparing a graph that cannot read the later colours.
       for (const name of colouredBatches.filter(name => name !== 'kaleidoscope-flow-ribbons')) {
@@ -106,6 +116,11 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
     },
     render(_scene, camera, elapsed, reduced, dt) {
       if (disposed || !post || !glow) return;
+      if (roadEffects) {
+        roadEffects.update(camera, elapsed, reduced, dt); glow.strength.value = reduced ? .015 : .04;
+        if (adaptive.sample(dt)) renderer.setPixelRatio(adaptive.ratio);
+        renderer.info.reset(); post.render(); return;
+      }
       clock.value = reduced ? 0 : elapsed;
       const distance = distanceAt(camera.position.z) + 16;
       const encounter = lotusGapAt(distance) > .1 ? lotusDistanceAt(distance) : mandalaDistanceAt(distance);
@@ -117,7 +132,7 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
     },
     dispose() {
       if (disposed) return; disposed = true;
-      post?.dispose(); glow?.dispose(); scenePass?.dispose();
+      post?.dispose(); glow?.dispose(); scenePass?.dispose(); roadEffects?.dispose();
       replaced.forEach(material => material.dispose()); replaced.clear(); renderer.dispose();
     }
   };

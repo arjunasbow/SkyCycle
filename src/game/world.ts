@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { addKaleidoscope } from './kaleidoscope-scene';
 import { addTunnelRider } from './tunnel-rider';
+import { upgradeRoadBike } from './cinematic-bike';
 import type { FlowState } from './kaleidoscope';
 import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
 import { addSpaceScenery } from './space';
@@ -18,7 +19,7 @@ export function terrainHeight(x: number, z: number) {
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
 export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateTunnel?: (time: number, flow: FlowState, reduced: boolean) => void; updateRace?: (race: RaceState, timed: boolean, dt?: number) => void; update: (time: number, thrust: number, dt: number, cadence?: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
-export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'enhanced'): World {
+export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'enhanced', cinematic = false): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
   const sun = new THREE.DirectionalLight(0xffe6bd, 2.6); sun.position.set(-350, 600, 160); scene.add(sun);
@@ -77,7 +78,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   const enhanced = environment === 'valley' && valleyStyle === 'enhanced' ? addEnhancedValley(scene, quality, terrainHeight, riverX) : undefined;
   const space = environment === 'space' ? addSpaceScenery(scene, quality) : undefined;
-  const road = environment === 'road' ? addRoadScenery(scene, quality) : undefined;
+  const road = environment === 'road' ? addRoadScenery(scene, quality, cinematic) : undefined;
   const kaleidoscope = environment === 'kaleidoscope' ? addKaleidoscope(scene, quality) : undefined;
   const targets = environment === 'road' || kaleidoscope ? [] : createCourse(), targetObjects: THREE.Object3D[] = [];
   const polishedGold = enhanced ? new THREE.MeshStandardMaterial({ color: 0xffc65c, metalness: .45, roughness: .3, emissive: 0xb77a18, emissiveIntensity: .22 }) : goldMat;
@@ -170,6 +171,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
     mesh(box, orange, 0, 2.29, .19, .37, .46, .2, bike);
     for (const side of [-1, 1]) mesh(box, orange, side * 1.05, 0, 0, .28, .16, .14, propeller);
   }
+  if (road && cinematic) { const detailedWheels = upgradeRoadBike(bike, quality); wheels.splice(0, wheels.length, ...detailedWheels); propeller.clear(); }
   if (road) { bike.scale.setScalar(1.25); propeller.visible = false; road.attachRiders(bike); }
   const resetTargets = () => { tunnelRider?.reset(); burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {

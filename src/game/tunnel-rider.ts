@@ -13,6 +13,7 @@ export function addTunnelRider(bike: THREE.Group, quality: Quality) {
   const segments = quality === 'low' ? 12 : 20;
   const sphere = new THREE.SphereGeometry(1, segments, 14), cylinder = new THREE.CylinderGeometry(1, 1, 1, segments);
   const skin = new THREE.MeshLambertMaterial({ color: 0xd3ac88 }), jersey = new THREE.MeshLambertMaterial({ color: 0x279c8a });
+  skin.name = 'rider-skin'; jersey.name = 'rider-jersey';
   const navy = new THREE.MeshLambertMaterial({ color: 0x253449 }), pearl = new THREE.MeshLambertMaterial({ color: 0xe0e4cf });
   const part = (mat: THREE.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const mesh = new THREE.Mesh(sphere, mat); mesh.position.set(x, y, z); mesh.scale.set(sx, sy, sz); root.add(mesh); return mesh;
@@ -44,11 +45,27 @@ export function addTunnelRider(bike: THREE.Group, quality: Quality) {
   const legs = [-1, 1].map(side => {
     const thigh = bar(navy, [side * .18, 1.92, .3], [side * .23, 1.4, -.1], .105); thigh.name = `rider-thigh-${side}`;
     const shin = bar(skin, [side * .23, 1.4, -.1], [side * .26, 1, 0], .075); shin.name = `rider-shin-${side}`;
-    const knee = part(skin, 0, 0, 0, .09, .09, .09), shoe = part(navy, 0, 0, 0, .12, .07, .23); shoe.name = `rider-shoe-${side}`;
-    const pedal = new THREE.Mesh(new THREE.BoxGeometry(.23, .04, .18), pearl); root.add(pedal);
+    const knee = part(skin, 0, 0, 0, .09, .09, .09); knee.name = `rider-knee-${side}`;
+    const shoe = part(navy, 0, 0, 0, .12, .07, .23); shoe.name = `rider-shoe-${side}`;
+    const pedal = new THREE.Mesh(new THREE.BoxGeometry(.23, .04, .18), pearl); pedal.name = `rider-pedal-${side}`; root.add(pedal);
     const crank = bar(pearl, [side * .25, .95, 0], [side * .25, .95, .23], .025); crank.name = `rider-crank-${side}`;
     return { side, thigh, shin, knee, shoe, pedal, crank };
   });
+  return createDetailedCyclingRig(bike);
+}
+/** Rebind a cloned rider without sharing animation state or mesh references. */
+export function createDetailedCyclingRig(bike: THREE.Group) {
+  const root = bike.getObjectByName('detailed-tunnel-rider') as THREE.Group;
+  const axis = new THREE.Vector3(0, 1, 0), delta = new THREE.Vector3();
+  const legs = [-1, 1].map(side => ({ side,
+    thigh: bike.getObjectByName(`rider-thigh-${side}`) as THREE.Mesh,
+    shin: bike.getObjectByName(`rider-shin-${side}`) as THREE.Mesh,
+    knee: bike.getObjectByName(`rider-knee-${side}`)!, shoe: bike.getObjectByName(`rider-shoe-${side}`)!,
+    pedal: bike.getObjectByName(`rider-pedal-${side}`)!, crank: bike.getObjectByName(`rider-crank-${side}`) as THREE.Mesh,
+  }));
+  const link = (mesh: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3, width: number) => {
+    delta.copy(b).sub(a); mesh.position.copy(a).add(b).multiplyScalar(.5); mesh.scale.set(width, delta.length(), width); mesh.quaternion.setFromUnitVectors(axis, delta.normalize());
+  };
   const hip = new THREE.Vector3(), knee = new THREE.Vector3(), foot = new THREE.Vector3(), hub = new THREE.Vector3(); let phase = 0;
   const pose = () => {
     for (const leg of legs) {
@@ -63,5 +80,5 @@ export function addTunnelRider(bike: THREE.Group, quality: Quality) {
     root.userData.crankPhase = phase;
   };
   pose();
-  return { update(cadence: number, dt: number) { if (Number.isFinite(dt) && dt > 0 && dt <= .1 && Number.isFinite(cadence)) { phase = (phase + Math.max(0, Math.min(150, cadence)) / 60 * Math.PI * 2 * dt) % (Math.PI * 2); pose(); } }, reset() { phase = 0; pose(); } };
+  return { update(cadence: number, dt: number) { if (Number.isFinite(dt) && dt > 0 && dt <= .1 && Number.isFinite(cadence)) { phase = (phase + Math.max(0, Math.min(150, cadence)) / 60 * Math.PI * 2 * dt) % (Math.PI * 2); pose(); } }, setPhase(next: number) { phase = next; pose(); }, reset() { phase = 0; pose(); } };
 }

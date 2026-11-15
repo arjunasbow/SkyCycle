@@ -1,10 +1,10 @@
-﻿import { createServer } from 'vite';
+import { createServer } from 'vite';
 const server = await createServer({ server: { middlewareMode: true } });
 try {
   const { createWorld } = await server.ssrLoadModule('/src/game/world.ts');
   const { initialRace, stepRace, racePosition } = await server.ssrLoadModule('/src/game/race.ts');
   for (const quality of ['low', 'medium', 'high']) {
-    const world = createWorld(quality, 'road');
+    const world = createWorld(quality, 'road', 'enhanced', process.argv.includes('--cinematic'));
     try {
       let triangles = 0, batches = 0, instances = 0; const geometries = new Set();
       world.scene.traverse(object => {
