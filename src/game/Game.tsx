@@ -1,4 +1,4 @@
-import { CHAPTERS, chapterAt, distanceAt, initialFlow, stepFlow, stepTunnel, tunnelHint } from './kaleidoscope';
+import { routeX, routeY, CHAPTERS, chapterAt, distanceAt, initialFlow, stepFlow, stepTunnel, tunnelHint } from './kaleidoscope';
 import { BUILD_INFO } from '../build-info';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -7,6 +7,8 @@ import { assistedSteering, clamp, collectTargets, courseEffortHint, DEFAULT_RIDE
 import { createWorld, terrainHeight, parseValleyStyle, type ValleyStyle, type Environment, type Quality } from './world';
 import './game.css';
 import { createGraphics } from './graphics';
+import { cyclingCadence } from './tunnel-rider';
+import { mandalaDistanceAt, mandalaGapAt, lotusGapAt, lotusDistanceAt } from './mandala-encounter';
 import { parseGraphicsMode, type GraphicsMode } from './graphics-settings';
 import { enterFlightFullscreen } from './display';
 import { roadCameraPose } from './road-camera';
@@ -20,6 +22,7 @@ interface Stats { flow?: number; multiplier?: number; inside?: boolean; rivals?:
 const clock = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
 export default function Game({ adapter, state, simulate }: { adapter: BikeDataAdapter; state: BikeState; simulate: () => void }) {
   const workspace = useRef<HTMLElement>(null);
+  const bikeStateRef = useRef(state); bikeStateRef.current = state;
   const [immersive, setImmersive] = useState(false), [displayMessage, setDisplayMessage] = useState('');
   const nativeFullscreen = useRef(false);
   const host = useRef<HTMLDivElement>(null), engine = useRef<{ reset: () => void } | null>(null);
@@ -156,7 +159,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       let passSequence = 0, passExpiry = 0;
       const passSides = race.riders.map(rider => Math.sign(rider.distance - race.distance));
       let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0, hitSequence = 0;
-      const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3();
+      const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3(), encounterLook = new THREE.Vector3();
       const resetCamera = () => {
         if (isRoad) {
           const view = roadCameraPose(race, dynamicCameraRef.current);
@@ -241,7 +244,9 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         world.bike.position.set(flight.x, flight.y, flight.z); world.bike.rotation.set(flight.pitch, -flight.heading, -flight.bank, 'YXZ');
         world.updateRace?.(race, modeRef.current === 'arcade', statusRef.current === 'running' ? dt : 0);
         world.updateTunnel?.(flight.elapsed, flow, reducedEffectsRef.current);
-        world.update(flight.elapsed, statusRef.current === 'running' ? flight.thrust : .08, isTunnel && statusRef.current !== 'running' ? 0 : dt);
+        const effortForAnimation = source.current?.effort(Date.now(), calibrationRef.current) ?? 0;
+        const riderCadence = cyclingCadence(bikeStateRef.current, Date.now(), calibrationRef.current.referenceCadence * effortForAnimation);
+        world.update(flight.elapsed, statusRef.current === 'running' ? flight.thrust : .08, isTunnel && statusRef.current !== 'running' ? 0 : dt, riderCadence);
         let cameraRoll = 0;
         if (isRoad) {
           const view = roadCameraPose(race, dynamicCameraRef.current);
@@ -252,6 +257,10 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         } else if (isTunnel) {
           targetCamera.set(flight.x - Math.sin(flight.heading) * 12, flight.y + 6, flight.z + 16);
           targetLook.set(flight.x + Math.sin(flight.heading) * 45, flight.y + 3, flight.z - 65);
+          const distance = distanceAt(flight.z), flower = lotusGapAt(distance) > .1;
+          const encounter = flower ? lotusDistanceAt(distance) : mandalaDistanceAt(distance), ahead = encounter - distance;
+          const focus = (flower ? lotusGapAt(distance) : mandalaGapAt(distance)) * THREE.MathUtils.smoothstep(ahead, 20, 100);
+          encounterLook.set(routeX(encounter), routeY(encounter), 110 - encounter); targetLook.lerp(encounterLook, focus);
         } else {
         targetCamera.set(flight.x - Math.sin(flight.heading) * 18, flight.y + 8, flight.z + Math.cos(flight.heading) * 18);
         targetLook.set(flight.x + Math.sin(flight.heading) * 28, flight.y + 3 + flight.pitch * 14, flight.z - Math.cos(flight.heading) * 28);
@@ -271,7 +280,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
           const next = world.targets.find(t => !t.bonus && !t.hit && t.z < flight.z);
           const guidance = raceGuidance(race, modeRef.current === 'arcade');
           if (isRoad) setStats({ speed: race.speed * 3.6, altitude: 0, score: 0, elapsed: race.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: guidance.effort, target: guidance.target, direction: '>', position: racePosition(race), distance: race.distance, rivals: race.riders.map(r => ({ name: r.name, gap: r.distance - race.distance })) });
-          else if (isTunnel) setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: tunnelHint(flight), target: `${CHAPTERS[chapterAt(distanceAt(flight.z))]} | ${flow.inside ? 'Follow the light' : 'Return to the glowing corridor'}`, direction: tunnelHint(flight) > 1.025 ? '\u2191' : tunnelHint(flight) < .975 ? '\u2193' : '\u2192', flow: flow.charge, multiplier: flow.multiplier, inside: flow.inside });
+          else if (isTunnel) setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: tunnelHint(flight), target: lotusGapAt(distanceAt(flight.z)) > .5 ? 'Lotus chamber | Through the unfolding flower' : mandalaGapAt(distanceAt(flight.z)) > .5 ? 'Mandala chamber | Follow the open centre' : `${CHAPTERS[chapterAt(distanceAt(flight.z))]} | ${flow.inside ? 'Follow the light' : 'Return to the glowing corridor'}`, direction: tunnelHint(flight) > 1.025 ? '\u2191' : tunnelHint(flight) < .975 ? '\u2193' : '\u2192', flow: flow.charge, multiplier: flow.multiplier, inside: flow.inside });
           else setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: courseEffortHint(flight, next), target: next ? `${next.kind === 'ring' ? 'Ring' : 'Balloon'} · ${Math.round(Math.hypot(next.x - flight.x, next.y - flight.y, next.z - flight.z))} m · ${Math.round(next.y)} m altitude` : environment === 'space' ? 'Follow the starlight' : 'Follow the valley', direction: next ? next.x - flight.x > 15 ? '↗' : next.x - flight.x < -15 ? '↖' : next.y - flight.y > 8 ? '⇧' : next.y - flight.y < -8 ? '⇩' : '↑' : '↑' });
           frameCount = 0; statTime = timestamp;
         }
@@ -293,7 +302,6 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
     <div className="flight-view"><div className="scene-host" ref={host}/>
       <div className="flight-top"><span className="location-tag">{isTunnel ? 'KALEIDOSCOPE' : isRoad ? 'THE AMBER ROAD' : environment === 'space' ? '✦ THE STARLIGHT REACH' : '↟ THE AMBER VALLEY'} <small title={`Commit ${BUILD_INFO.commit} | ${BUILD_INFO.builtAt}`}>{BUILD_INFO.label} | {BUILD_INFO.commit}</small></span><span className="flight-mode">{mode === 'scenic' ? isRoad ? 'UNLIMITED GROUP RIDE' : '∞ SCENIC EXPLORATION' : `${isRoad ? 'ROAD RACE' : 'ARCADE'} · ${clock(Math.max(0, DEFAULT_RIDE_SECONDS - stats.elapsed))} LEFT`}</span></div>
       <div className="flight-hud"><Hud value={Math.round(stats.speed)} unit="KM/H" label="SPEED"/><Hud value={isRoad ? Math.round(stats.distance ?? 0) : Math.round(stats.altitude)} unit="M" label={isRoad ? "DISTANCE" : "ALTITUDE"}/>{isRoad ? <Hud value={`${stats.position ?? 3}/6`} label="POSITION"/> : <Hud value={stats.score.toString().padStart(4, '0')} label="SCORE" pulse={stats.score}/>}<Hud value={clock(stats.elapsed)} label={isRoad ? "RIDE TIME" : "FLIGHT TIME"}/></div>
-      {isTunnel && <div className={`flow-meter ${stats.inside === false ? 'outside' : ''}`} aria-label="Tunnel flow"><strong>&times;{stats.multiplier ?? 1}</strong><progress max={30} value={stats.flow ?? 0}/><span>{stats.inside === false ? 'Outside | follow the glow' : `FLOW | ${Math.round(stats.flow ?? 0)} / 30 s`}</span></div>}
       {hitFeedback && status === 'running' && <div key={hitFeedback.sequence} className={`hit-feedback ${hitFeedback.kind}`} role="status" aria-live="polite"><strong>+{hitFeedback.points}</strong><span>{hitFeedback.kind === 'ring' ? 'RING CLEARED!' : 'BALLOON POPPED!'}</span></div>}
       {status === 'running' && <div className="target-guide"><b>{stats.direction}</b><span>{stats.target}<small>Aim {suggestedEffort} {effortUnit} | {isRoad ? 'Optional pace guide' : stats.effortHint > 1.025 ? 'Gentle climb' : stats.effortHint < .975 ? 'Gentle dip - keep pedalling' : 'Steady cruise'}</small></span></div>}
       {isRoad && status === 'running' && passNotice && <div key={passNotice.sequence} className="race-pass" role="status">{passNotice.text}</div>}
