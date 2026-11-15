@@ -132,8 +132,13 @@ export async function createCinematic(quality: Quality, environment: Environment
     },
     dispose() {
       if (disposed) return; disposed = true;
-      post?.dispose(); glow?.dispose(); scenePass?.dispose(); roadEffects?.dispose();
-      replaced.forEach(material => material.dispose()); replaced.clear(); renderer.dispose();
+      const errors: unknown[] = [];
+      // Always reach the renderer even if one postprocessing target/listener fails.
+      for (const resource of [post, glow, scenePass, roadEffects, ...replaced, renderer]) {
+        try { resource?.dispose(); } catch (error) { errors.push(error); }
+      }
+      replaced.clear();
+      if (errors.length) console.warn('Recovered from Cinematic resource cleanup errors.', ...errors);
     }
   };
 }
