@@ -7,6 +7,7 @@ import { assistedSteering, clamp, collectTargets, courseEffortHint, DEFAULT_RIDE
 import { createWorld, terrainHeight, parseValleyStyle, type ValleyStyle, type Environment, type Quality } from './world';
 import './game.css';
 import { createGraphics } from './graphics';
+import { graphicsDisposer } from './graphics-lifecycle';
 import { cyclingCadence } from './tunnel-rider';
 import { mandalaDistanceAt, mandalaGapAt, lotusGapAt, lotusDistanceAt } from './mandala-encounter';
 import { parseGraphicsMode, type GraphicsMode } from './graphics-settings';
@@ -155,6 +156,8 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       renderer.domElement.setAttribute('aria-label', isTunnel ? 'Luminous winding Kaleidoscope bicycle tunnel' : environment === 'road' ? 'Road cycling race with five simulated riders' : environment === 'space' ? 'Flying bicycle among planets and spiral galaxies' : 'Three-dimensional flying bicycle in a mountain valley');
 
       const world = createWorld(quality, environment, valleyStyle, isRoad && graphics.label.startsWith('WebGPU')), camera = new THREE.PerspectiveCamera(60, 1, .3, 1700);
+      const disposeScene = graphicsDisposer(world, graphics);
+      try {
       let race = initialRace(), roadLap = 0, flow = initialFlow();
       let passSequence = 0, passExpiry = 0;
       const passSides = race.riders.map(rider => Math.sign(rider.distance - race.distance));
@@ -178,14 +181,14 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       resize();
       try { await graphics.prepare(world.scene, camera); }
       catch (error) {
-        world.dispose(); graphics.dispose();
+        disposeScene();
         if (cancelled) return;
         if (graphics.label.startsWith('WebGPU')) {
           setGraphicsNotice('Cinematic could not prepare this scene. Standard graphics is active. Try Cinematic again in Flight settings.'); setGpuFailed(true); return;
         }
         throw error;
       }
-      if (cancelled) { world.dispose(); graphics.dispose(); return; }
+      if (cancelled) { disposeScene(); return; }
       container.appendChild(renderer.domElement); engine.current = activeEngine; setGraphicsReady(true);
       lastTime = performance.now();
       const observer = new ResizeObserver(resize); observer.observe(container);
@@ -287,7 +290,8 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         }
       };
       frame = requestAnimationFrame(animate);
-      cleanup = () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); graphics.dispose(); world.dispose(); renderer.domElement.remove(); if (engine.current === activeEngine) engine.current = null; };
+      cleanup = () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); disposeScene(); renderer.domElement.remove(); if (engine.current === activeEngine) engine.current = null; };
+      } catch (error) { disposeScene(); throw error; }
     };
     void start().catch(() => { if (!cancelled) setError('3D rendering is unavailable in this browser. Choose Standard graphics or another quality setting to retry.'); });
     return () => { cancelled = true; cleanup?.(); };

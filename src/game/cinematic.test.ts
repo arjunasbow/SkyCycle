@@ -1,5 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import * as THREE from 'three';
+import { PostProcessing } from 'three/webgpu';
+import { graphicsDisposer } from './graphics-lifecycle';
 vi.mock('three/webgpu', async importOriginal => {
   const original = await importOriginal<typeof import('three/webgpu')>();
   return { ...original,
@@ -56,4 +58,19 @@ it('rejects uninitialised white batches before WebGPU shader compilation', async
     expect(CINEMATIC_LIGHTING.maxHalo).toBeLessThanOrEqual(.012);
     expect(CINEMATIC_LIGHTING.bloomStrength).toBeLessThan(.15);
   } finally { graphics.dispose(); world.dispose(); vi.unstubAllGlobals(); }
+});
+
+it('still releases the renderer when a postprocessing cleanup throws during a world switch', async () => {
+  vi.stubGlobal('navigator', { gpu: {} }); vi.stubGlobal('window', { devicePixelRatio: 2 });
+  const world = createWorld('low', 'kaleidoscope'), graphics = await createCinematic('low');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    world.bike.position.set(0, 45, 110); world.updateTunnel!(0, initialFlow(), false);
+    await graphics.prepare(world.scene, new THREE.PerspectiveCamera());
+    const rendererDispose = vi.spyOn(graphics.renderer, 'dispose');
+    const postDispose = vi.spyOn(PostProcessing.prototype, 'dispose').mockImplementation(() => { throw new Error('post target release'); });
+    const release = graphicsDisposer(world, graphics);
+    expect(release).not.toThrow(); release(); expect(rendererDispose).toHaveBeenCalledOnce();
+    expect(world.scene.children).toHaveLength(0); postDispose.mockRestore();
+  } finally { warn.mockRestore(); vi.unstubAllGlobals(); }
 });

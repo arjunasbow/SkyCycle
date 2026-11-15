@@ -302,3 +302,9 @@ These are scene inventories, not live GPU draw counts or phone benchmarks. The s
 Cinematic Road omits the repeated faceted verge blobs and river stones, retaining grass, flowers, signs and structural bridge stonework. Broadleaf trees and bushes use a single softly irregular, smoothly shaded foliage surface; broadleaf crowns no longer have separate raised side lobes. Seeded scenery placement is preserved.
 
 The detailed rider now uses the correct forward crank phase, and both road styles roll their wheels forward. The Standard rider's already-correct crank direction remains unchanged. All 112 tests, build and deployment dry run pass; the regression check verifies that a top-of-stroke pedal moves toward the handlebars and wheel rotation matches forward travel. Real phone visual verification remains necessary.
+
+## Reliable world switching
+
+World/quality/graphics switches now dispose scene materials and geometries while the renderer caches are still alive, then release postprocessing and the renderer. The previous active-session cleanup reversed that order; Three.js WebGPU material-disposal listeners could then access a deleted node-builder state and throw during React effect cleanup, blanking the interface. A once-only disposer is shared by active cleanup, cancelled compilation and failed startup. Cleanup exceptions are contained and all Cinematic resource releases are attempted, including the renderer.
+
+Validation: 117 tests, build and deployment dry run pass. A GPU-free regression test reproduces the actual Three.js node-cache exception with renderer-first disposal and verifies scene-first disposal. Additional tests cover repeated Road/Kaleidoscope/Valley/Space releases, late cancellation, idempotence and postprocessing failure without skipping renderer release. On-device switching still needs phone confirmation.
