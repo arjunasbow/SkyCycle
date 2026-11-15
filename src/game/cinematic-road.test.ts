@@ -22,7 +22,11 @@ it.each<Quality>(['low','medium','high'])('builds detailed road scenery and boun
   for(const rival of rivals)rival.traverse(object=>{if(object instanceof THREE.Mesh&&!Array.isArray(object.material)&&object.material.name==='rider-jersey')jerseys.add((object.material as THREE.MeshLambertMaterial).color.getHex());});
   expect(jerseys.size).toBe(5);
   let bicycleDraws=0;world.bike.traverse(object=>{if(object instanceof THREE.Mesh)bicycleDraws++;});expect(bicycleDraws).toBeLessThan(38);
-  const stones=world.scene.getObjectByName('river-stones') as THREE.InstancedMesh;expect(stones.count).toBe(10);
+  expect(world.scene.getObjectByName('river-stones')).toBeUndefined();
+  expect(world.scene.getObjectByName('detail-verges')).toBeUndefined();
+  const crowns=world.scene.getObjectByName('broadleaf-canopy') as THREE.InstancedMesh;
+  expect(crowns.geometry).toBeInstanceOf(THREE.SphereGeometry);
+  expect(crowns.count).toBe(Math.ceil((quality==='low'?16:quality==='medium'?26:38)/3));
   world.dispose();
 });
 it('pedals shoes, knees, cranks and wheels independently for each rider, freezing on pause',()=>{
@@ -61,4 +65,13 @@ it.each<Quality>(['low','medium','high'])('prepares native road nodes, daylight 
 });
 it('leaves the standard road scene and original bike available for comparison',()=>{
   const world=createWorld('low','road');expect(world.scene.getObjectByName('bridge-arches')).toBeUndefined();expect(world.bike.userData.components).toBeUndefined();world.dispose();
+});
+
+it('moves a top-of-stroke pedal toward the handlebars and rolls the wheels forward',()=>{
+  const world=createWorld('low','road','enhanced',true),race=initialRace();
+  race.distance=0;world.updateRace!(race,false);
+  const foot=world.bike.getObjectByName('rider-shoe--1')!,wheel=world.bike.getObjectByName('road-front-wheel')!;
+  const z=foot.position.z;race.distance=.1;world.updateRace!(race,false);
+  expect(foot.position.z).toBeLessThan(z);expect(wheel.rotation.z).toBeLessThan(0);
+  world.dispose();
 });

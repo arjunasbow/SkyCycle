@@ -278,21 +278,27 @@ Choose **World: Road race** and **Flight settings > Graphics style > Cinematic Â
 The package adds:
 
 - Shared detailed bikes: smooth frames and riders, spoked wheels/hubs, drop handlebars, brake levers/cables, saddle, chainring/cassette/chain, bottle and team accents. Shoes, knees, cranks and wheels animate independently on all six riders; attacks add a small posture change. Static parts merge by material to bound draw calls.
-- Mixed layered conifers and clustered broadleaf trees, branches, bushes, swaying grass, five-petal flowers, crop rows and grassier, less rocky hills. Only a few small river stones remain around the stream.
+- Mixed layered conifers and clustered broadleaf trees, branches, bushes, swaying grass, five-petal flowers, crop rows and grassier, less rocky hills. Decorative verge rocks and river stones are omitted.
 - Detailed chalet villages with foundations, roof tile/ridge lines, framed windows/crossbars, shutters, timber beams, doors, balconies/balusters, flower boxes, chimney caps, garden paths and mailboxes. A village tower adds a distant landmark.
 - A real arched bridge profile, stone joints/caps, reeds and a flowing stream with native TSL water shading. Asphalt receives native TSL grain, surface patches and subtle canopy patterns; existing road markings, fences, reflectors and readable signs remain.
 - A gradient daylight sky, layered clouds, warm sun, atmospheric depth and soft contact shadows. Medium/High enable bounded scenery shadow maps, refreshed only periodically/as the camera moves; Low uses contact shadows and simplified lighting. Restrained daylight bloom has a hard contribution cap of 0.003 linear RGB per channel.
 
 Reduced effects freezes wind, water and decorative cloud movement. Quality controls vegetation/terrain/model detail; adaptive rendering resolution remains active. All scenery is procedural and chunk-recycled, without external asset downloads. Valley, Space, Standard Road and Kaleidoscope keep their existing visual paths.
 
-Validation: **111 tests pass**, production build, deployment dry run and diff check pass. New coverage checks detailed scenery and jersey identity, shared bike draw budget, shoes/wheels/pause behaviour, bounded unlimited recycling without race mutation, full resource disposal, native road material preparation and quality-dependent shadow configuration. GPU objects are mocked in renderer tests: real shader compilation, iPhone/Bluefy frame rate, heat and rendered appearance remain unverified because the available test browser has graphics acceleration disabled.
+Validation: **112 tests pass**, production build, deployment dry run and diff check pass. New coverage checks detailed scenery and jersey identity, shared bike draw budget, shoes/wheels/pause behaviour, bounded unlimited recycling without race mutation, full resource disposal, native road material preparation and quality-dependent shadow configuration. GPU objects are mocked in renderer tests: real shader compilation, iPhone/Bluefy frame rate, heat and rendered appearance remain unverified because the available test browser has graphics acceleration disabled.
 
 `node scripts/road-race-budget.mjs --cinematic` inventories the CPU world before sky/postprocessing preparation (all objects, including off-screen):
 
 | Quality | Whole-scene triangles | Instance batches | Instances | Unique geometries |
 | --- | ---: | ---: | ---: | ---: |
-| Low | 270,061 | 334 | 6,068 | 85 |
-| Medium | 526,086 | 334 | 10,028 | 85 |
-| High | 830,325 | 334 | 13,720 | 85 |
+| Low | 260,733 | 320 | 5,642 | 84 |
+| Medium | 592,886 | 320 | 9,290 | 84 |
+| High | 828,485 | 320 | 12,774 | 84 |
 
 These are scene inventories, not live GPU draw counts or phone benchmarks. The script without `--cinematic` retains the Standard inventory and the same reproducible race outcomes.
+
+### Road verge, crown and pedalling corrections
+
+Cinematic Road omits the repeated faceted verge blobs and river stones, retaining grass, flowers, signs and structural bridge stonework. Broadleaf trees and bushes use a single softly irregular, smoothly shaded foliage surface; broadleaf crowns no longer have separate raised side lobes. Seeded scenery placement is preserved.
+
+The detailed rider now uses the correct forward crank phase, and both road styles roll their wheels forward. The Standard rider's already-correct crank direction remains unchanged. All 112 tests, build and deployment dry run pass; the regression check verifies that a top-of-stroke pedal moves toward the handlebars and wheel rotation matches forward travel. Real phone visual verification remains necessary.
