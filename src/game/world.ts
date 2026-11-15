@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { addKaleidoscope } from './kaleidoscope-scene';
+import { addTunnelRider } from './tunnel-rider';
 import type { FlowState } from './kaleidoscope';
 import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
 import { addSpaceScenery } from './space';
@@ -16,7 +17,7 @@ export function terrainHeight(x: number, z: number) {
   return Math.max(-2, (Math.sin(x * .017 + z * .003) * 6 + Math.cos(z * .011) * 4) * Math.min(1, d / 90) + Math.max(0, d - 220) * .2 - 2);
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
-export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateTunnel?: (time: number, flow: FlowState, reduced: boolean) => void; updateRace?: (race: RaceState, timed: boolean, dt?: number) => void; update: (time: number, thrust: number, dt: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
+export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateTunnel?: (time: number, flow: FlowState, reduced: boolean) => void; updateRace?: (race: RaceState, timed: boolean, dt?: number) => void; update: (time: number, thrust: number, dt: number, cadence?: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
 export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'enhanced'): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
@@ -123,9 +124,12 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   }
   for (const [a, b] of [[[0, .72, .95], [0, 1.65, .35]], [[0, 1.65, .35], [0, .72, -.05]], [[0, .72, -.05], [0, .72, .95]], [[0, .72, -.05], [0, 1.6, -.85]], [[0, 1.65, .35], [0, 1.6, -.85]], [[0, 1.8, -.9], [0, .72, -.95]]]) tube(a, b, .065, orange);
   mesh(box, dark, 0, 1.8, .37, .5, .12, .55, bike); tube([-.45, 1.94, -.85], [.45, 1.94, -.85], .05, metal);
+  const tunnelRider = kaleidoscope ? addTunnelRider(bike, quality) : undefined;
+  if (!kaleidoscope) {
   // Stylized rider: cream helmet, jacket and articulated legs.
   mesh(sphere, creamMat, 0, 2.85, -.15, .32, .35, .34, bike).name = 'rider-helmet'; tube([0, 1.9, .3], [0, 2.55, -.05], .24, treeMat).name = 'rider-torso';
   for (const side of [-1, 1]) { tube([side * .2, 2.5, -.05], [side * .4, 1.95, -.85], .08, creamMat); tube([side * .18, 1.92, .3], [side * .23, 1.35, -.1], .1, dark).name = `rider-thigh-${side}`; tube([side * .23, 1.35, -.1], [side * .25, .8, 0], .08, creamMat).name = `rider-shin-${side}`; }
+  }
   const propeller = new THREE.Group(); propeller.name = 'bike-rotor'; propeller.position.set(0, 1.5, -1.9); bike.add(propeller);
   const exhausts: THREE.Group[] = [];
   if (space) {
@@ -167,10 +171,11 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
     for (const side of [-1, 1]) mesh(box, orange, side * 1.05, 0, 0, .28, .16, .14, propeller);
   }
   if (road) { bike.scale.setScalar(1.25); propeller.visible = false; road.attachRiders(bike); }
-  const resetTargets = () => { burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
+  const resetTargets = () => { tunnelRider?.reset(); burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {
     scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate, updateRace: road?.update, updateTunnel: kaleidoscope ? (time, flow, reduced) => kaleidoscope.update(time, bike.position, flow, reduced) : undefined,
-    update(time, thrust, dt) {
+    update(time, thrust, dt, cadence) {
+      tunnelRider?.update(cadence ?? (thrust > .01 ? 80 * Math.min(1.5, thrust) : 0), dt);
       if (burst.visible) {
         burstAge += dt; burst.visible = burstAge < .85; burstMaterial.opacity = Math.max(0, 1 - burstAge / .85);
         for (let i = 0; i < burstPositions.length; i++) burstPositions[i] += burstVelocity[i] * dt;

@@ -5,7 +5,8 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import type { Graphics } from './graphics';
 import { AdaptiveResolution, graphicsPixelCap } from './graphics-settings';
 import type { Quality } from './world';
-import { distanceAt, JOURNEY_LENGTH, routeX, routeY } from './kaleidoscope';
+import { distanceAt, routeX, routeY } from './kaleidoscope';
+import { lotusDistanceAt, lotusGapAt, mandalaDistanceAt } from './mandala-encounter';
 
 export const CINEMATIC_LIGHTING = Object.freeze({
   ringGain: 1.25, accentGain: 1.15, bloomStrength: .12,
@@ -106,7 +107,8 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
     render(_scene, camera, elapsed, reduced, dt) {
       if (disposed || !post || !glow) return;
       clock.value = reduced ? 0 : elapsed;
-      const encounter = Math.floor((distanceAt(camera.position.z) + 266) / JOURNEY_LENGTH) * JOURNEY_LENGTH + 1380;
+      const distance = distanceAt(camera.position.z) + 16;
+      const encounter = lotusGapAt(distance) > .1 ? lotusDistanceAt(distance) : mandalaDistanceAt(distance);
       atmosphere?.position.set(routeX(encounter), routeY(encounter) + 5, 110 - encounter);
       shimmer.value = reduced ? .45 : .85 + Math.sin(elapsed * .25) * .15;
       glow.strength.value = reduced ? .04 : quality === 'low' ? .08 : CINEMATIC_LIGHTING.bloomStrength;
