@@ -1,11 +1,17 @@
 import * as THREE from 'three';
 import { WebGPURenderer, MeshBasicNodeMaterial, PostProcessing } from 'three/webgpu';
-import { color, float, mix, pass, sin, smoothstep, uniform, uv, vec2, vec3 } from 'three/tsl';
+import { color, float, mix, pass, sin, smoothstep, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import type { Graphics } from './graphics';
 import { AdaptiveResolution, graphicsPixelCap } from './graphics-settings';
 import type { Quality } from './world';
 import { distanceAt, JOURNEY_LENGTH, routeX, routeY } from './kaleidoscope';
+
+export const CINEMATIC_LIGHTING = Object.freeze({
+  ringGain: 1.25, accentGain: 1.15, bloomStrength: .12,
+  bloomRadius: .25, bloomThreshold: .9, maxHalo: .012,
+});
+const colouredBatches = ['kaleidoscope-rings', 'kaleidoscope-frames', 'kaleidoscope-lanterns', 'kaleidoscope-flow-ribbons'];
 
 /** Opt-in WebGPU experiment for Kaleidoscope. Nothing is imported on the standard path. */
 export async function createCinematic(quality: Quality): Promise<Graphics> {
@@ -32,6 +38,12 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
     onFailure(handler) { failureHandler = handler; if (lost) handler(); },
     renderer, label: 'WebGPU · CINEMATIC', notice: '',
     async prepare(scene, camera) {
+      // Missing instance colours at compilation produce white materials in WebGPU.
+      // Fail safely instead of preparing a graph that cannot read the later colours.
+      for (const name of colouredBatches.filter(name => name !== 'kaleidoscope-flow-ribbons')) {
+        const batch = scene.getObjectByName(name) as THREE.InstancedMesh | undefined;
+        if (batch && !batch.instanceColor) throw new Error('Initialise tunnel colours before compiling Cinematic graphics');
+      }
       // Translate the one GLSL-only material to TSL, including instanced UV support.
       // Material replacement is confined to this newly-created scene.
       scene.traverse(object => {
@@ -41,15 +53,15 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
           const p = uv().mul(vec2(18, 4));
           const ripple = sin(p.x.add(sin(p.y.mul(2).add(clock.mul(.25))).mul(1.8)));
           const seam = smoothstep(.035, .12, sin(p.x.mul(1.6).add(sin(p.y.add(clock.mul(.15))))).abs());
-          material.colorNode = mix(vec3(.025, .16, .24), vec3(.24, .045, .32), ripple.mul(.5).add(.5)).mul(seam.mul(.65).add(.35)).mul(1.8);
+          material.colorNode = mix(vec3(.025, .16, .24), vec3(.24, .045, .32), ripple.mul(.5).add(.5)).mul(seam.mul(.65).add(.35)).mul(1.0);
           material.opacityNode = float(.24);
           replaced.add(object.material as THREE.Material); object.material = material;
         }
         // HDR values produce a restrained halo on the light sources, not on the HUD or rider.
-        if (['kaleidoscope-rings', 'kaleidoscope-frames', 'kaleidoscope-lanterns', 'kaleidoscope-flow-ribbons'].includes(object.name)) {
+        if (colouredBatches.includes(object.name)) {
           const original = object.material as THREE.MeshBasicMaterial;
           const material = new MeshBasicNodeMaterial({ color: original.color, side: original.side, transparent: original.transparent, opacity: original.opacity, depthWrite: original.depthWrite });
-          material.colorNode = color(original.color).mul(2.1);
+          material.colorNode = color(original.color).mul(CINEMATIC_LIGHTING.ringGain);
           // NodeMaterial's built-in vertex/instance colours remain active.
           replaced.add(original); object.material = material;
         }
@@ -64,7 +76,7 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
           let material = luminous.get(original);
           if (!material) {
             material = new MeshBasicNodeMaterial({ color: original.color, side: original.side, wireframe: original.wireframe });
-            material.colorNode = color(original.color).mul(1.4); luminous.set(original, material); replaced.add(original);
+            material.colorNode = color(original.color).mul(CINEMATIC_LIGHTING.accentGain); luminous.set(original, material); replaced.add(original);
           }
           object.material = material;
         });
@@ -82,8 +94,11 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
       atmosphere = new THREE.Group(); atmosphere.name = 'cinematic-atmosphere'; atmosphere.add(veils); scene.add(atmosphere);
       scenePass = pass(scene, camera);
       const beauty = scenePass.getTextureNode();
-      glow = bloom(beauty, quality === 'low' ? .24 : .38, .5, .9);
-      post = new PostProcessing(renderer); post.outputNode = beauty.add(glow);
+      glow = bloom(beauty, quality === 'low' ? .08 : CINEMATIC_LIGHTING.bloomStrength, CINEMATIC_LIGHTING.bloomRadius, CINEMATIC_LIGHTING.bloomThreshold);
+      // Hard bound on added light, even where hundreds of rings overlap in the distance.
+      // Keep the scene alpha rather than adding the bloom texture's alpha to it.
+      const halo = glow.rgb.min(vec3(CINEMATIC_LIGHTING.maxHalo));
+      post = new PostProcessing(renderer); post.outputNode = vec4(beauty.rgb.add(halo), beauty.a);
       await renderer.compileAsync(scene, camera);
       // Compile the post stack too while the ride is still on its loading screen.
       post.render();
@@ -94,7 +109,7 @@ export async function createCinematic(quality: Quality): Promise<Graphics> {
       const encounter = Math.floor((distanceAt(camera.position.z) + 266) / JOURNEY_LENGTH) * JOURNEY_LENGTH + 1380;
       atmosphere?.position.set(routeX(encounter), routeY(encounter) + 5, 110 - encounter);
       shimmer.value = reduced ? .45 : .85 + Math.sin(elapsed * .25) * .15;
-      glow.strength.value = reduced ? .14 : quality === 'low' ? .24 : .38;
+      glow.strength.value = reduced ? .04 : quality === 'low' ? .08 : CINEMATIC_LIGHTING.bloomStrength;
       if (adaptive.sample(dt)) renderer.setPixelRatio(adaptive.ratio);
       renderer.info.reset(); post.render();
     },

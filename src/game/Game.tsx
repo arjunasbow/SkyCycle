@@ -165,6 +165,10 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       };
       if (isRoad) racePose(race, flight);
       resetCamera();
+      // WebGPU builds its material graph from the attributes present at compilation.
+      // Populate per-instance colours/transforms before warming the shaders.
+      world.bike.position.set(flight.x, flight.y, flight.z);
+      world.updateTunnel?.(flight.elapsed, flow, reducedEffectsRef.current);
       const activeEngine = { reset() { flight = initialFlight(); flow = initialFlow(); race = initialRace(); roadLap = 0; setPassNotice(undefined); passExpiry = 0; race.riders.forEach((rider, i) => { passSides[i] = Math.sign(rider.distance - race.distance); }); if (isRoad) racePose(race, flight); score = 0; setHitFeedback(undefined); setStats(previous => ({ ...previous, score: 0, elapsed: 0, flow: 0, multiplier: 1, inside: true, position: isRoad ? racePosition(race) : undefined, distance: 0 })); world.resetTargets(); resetCamera(); accumulator = 0; } };
       const resize = () => { const { width, height } = container.getBoundingClientRect(); renderer.setSize(Math.max(1, width), Math.max(1, height)); camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); };
       resize();

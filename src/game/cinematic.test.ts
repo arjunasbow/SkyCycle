@@ -10,8 +10,9 @@ vi.mock('three/webgpu', async importOriginal => {
     PostProcessing: class { render() {} dispose() {} }
   };
 });
-import { createCinematic } from './cinematic';
+import { createCinematic, CINEMATIC_LIGHTING } from './cinematic';
 import { createWorld } from './world';
+import { initialFlow } from './kaleidoscope';
 it('adapts every tunnel GLSL material, keeps scene effects bounded and releases replacements and targets', async () => {
   vi.stubGlobal('navigator', { gpu: {} }); vi.stubGlobal('window', { devicePixelRatio: 2 });
   try {
@@ -20,7 +21,15 @@ it('adapts every tunnel GLSL material, keeps scene effects bounded and releases 
       const original = (world.scene.getObjectByName('kaleidoscope-liquid-glass') as THREE.Mesh).material as THREE.Material;
       const dispose = vi.spyOn(original, 'dispose');
       const graphics = await createCinematic(quality), camera = new THREE.PerspectiveCamera();
+      world.bike.position.set(0, 45, 110);
+      world.updateTunnel!(0, initialFlow(), false);
       await graphics.prepare(world.scene, camera);
+      for (const name of ['kaleidoscope-rings', 'kaleidoscope-frames', 'kaleidoscope-lanterns']) {
+        const mesh = world.scene.getObjectByName(name) as THREE.InstancedMesh;
+        expect(mesh.instanceColor).not.toBeNull();
+        const tint = new THREE.Color(); mesh.getColorAt(0, tint);
+        expect(Math.max(tint.r, tint.g, tint.b) - Math.min(tint.r, tint.g, tint.b)).toBeGreaterThan(.01);
+      }
       let shaders = 0;
       world.scene.traverse(object => { if (object instanceof THREE.Mesh && object.material instanceof THREE.ShaderMaterial) shaders++; });
       expect(shaders).toBe(0); expect(graphics.label).toContain('WebGPU');
@@ -35,4 +44,16 @@ it('adapts every tunnel GLSL material, keeps scene effects bounded and releases 
       world.dispose();
     }
   } finally { vi.unstubAllGlobals(); }
+});
+
+it('rejects uninitialised white batches before WebGPU shader compilation', async () => {
+  vi.stubGlobal('navigator', { gpu: {} }); vi.stubGlobal('window', { devicePixelRatio: 2 });
+  const world = createWorld('low', 'kaleidoscope'), graphics = await createCinematic('low');
+  try {
+    const compile = vi.spyOn(graphics.renderer, 'compileAsync');
+    await expect(graphics.prepare(world.scene, new THREE.PerspectiveCamera())).rejects.toThrow('Initialise tunnel colours');
+    expect(compile).not.toHaveBeenCalled();
+    expect(CINEMATIC_LIGHTING.maxHalo).toBeLessThanOrEqual(.012);
+    expect(CINEMATIC_LIGHTING.bloomStrength).toBeLessThan(.15);
+  } finally { graphics.dispose(); world.dispose(); vi.unstubAllGlobals(); }
 });
