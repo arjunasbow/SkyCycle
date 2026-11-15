@@ -3,6 +3,8 @@ import { roadX, roadHeight, roadHeading, roadGrade, ROAD_LENGTH, type RaceState 
 import type { Quality } from './world';
 import { sceneryRandom } from './enhanced-valley';
 import { createCyclingRig } from './cycling-rig';
+import { createCinematicRaceRig } from './cinematic-bike';
+import { roadDetails, cinematicRoadBudget } from './road-details';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import signTypeface from 'three/examples/fonts/helvetiker_regular.typeface.json';
 
@@ -38,16 +40,18 @@ export const roadSceneryBudget = { low: { trees: 14, flowers: 0, terrain: 20 }, 
 export function roadChunkOffset(center: number, localDistance: number) {
   return Math.floor((localDistance - center + ROAD_LENGTH - 300) / ROAD_LENGTH) * ROAD_LENGTH;
 }
-const terrainY = (offset: number, d: number) => {
-  const hills = THREE.MathUtils.smoothstep(Math.abs(offset), 70, 620);
+const terrainY = (offset: number, d: number, cinematic = false) => {
+  const hills = THREE.MathUtils.smoothstep(Math.abs(offset), cinematic ? 110 : 70, cinematic ? 720 : 620);
   const ridge = 130 + Math.sin(d * Math.PI * 6 / ROAD_LENGTH + offset * .009) * 75 + Math.sin(d * Math.PI * 14 / ROAD_LENGTH + offset * .024) * 42;
   const channel = Math.max(0, 1 - Math.abs(d - 1100) / 24) * 4;
-  return roadHeight(d) - .18 + hills * ridge - channel;
+  return roadHeight(d) - .18 + hills * ridge * (cinematic ? .72 : 1) - channel;
 };
 
 /** Spatially batched roadside parallax, a periodic route and shared procedural artwork. */
-export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
-  const budget = roadSceneryBudget[quality], random = sceneryRandom(9402);
+export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low', cinematic = false) {
+  const budget = cinematic ? cinematicRoadBudget[quality] : roadSceneryBudget[quality], random = sceneryRandom(9402);
+  const detailed = cinematic ? roadDetails(quality) : undefined;
+  const terrainAt = (offset: number, d: number) => terrainY(offset, d, cinematic);
   scene.background = new THREE.Color(0xc5dce1); scene.fog = new THREE.Fog(0xc5dce1, 160, 1050);
   scene.children.forEach(object => {
     if (object instanceof THREE.HemisphereLight) { object.intensity = 1.7; object.groundColor.set(0x657b70); }
@@ -56,7 +60,7 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
   const root = new THREE.Group(); root.name = 'road-course'; scene.add(root);
   const mat = (color: number) => new THREE.MeshLambertMaterial({ color });
   const cream = mat(0xffefd0), green = mat(0xffffff), wood = mat(0x857053), stone = mat(0xa7a998), plaster = mat(0xe8d9ba), roof = mat(0x935b4e), dark = mat(0x314c55);
-  const asphalt = mat(0x647079);
+  const asphalt = mat(cinematic ? 0x424b50 : 0x647079); asphalt.name = cinematic ? 'cinematic-road-asphalt' : 'standard-road-asphalt';
   const landscapeMaterial = mat(0xffffff); landscapeMaterial.vertexColors = true;
   // World-anchored pavement grain, patching and baked-looking canopy shadows.
   asphalt.onBeforeCompile = shader => {
@@ -82,18 +86,18 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
     const group = new THREE.Group(), detail = new THREE.Group(); group.name = `road-chunk-${chunk}`; group.add(detail); root.add(group); chunks.push({ group, detail, center });
     type Batch = { geo: THREE.BufferGeometry; material: THREE.Material; transforms: THREE.Matrix4[]; colors: THREE.Color[] };
     const batches = new Map<string, Batch>();
-    const put = (name: string, geo: THREE.BufferGeometry, material: THREE.Material, d: number, offset: number, y: number, sx: number, sy: number, sz: number, color = 0xffffff) => {
+    const put = (name: string, geo: THREE.BufferGeometry, material: THREE.Material, d: number, offset: number, y: number, sx: number, sy: number, sz: number, color = 0xffffff, tiltX = 0, tiltZ = 0) => {
       if (!batches.has(name)) batches.set(name, { geo, material, transforms: [], colors: [] });
-      dummy.position.set(roadX(d) + offset, y, 110 - d); dummy.rotation.set(0, -roadHeading(d), 0); dummy.scale.set(sx, sy, sz); dummy.updateMatrix();
+      dummy.position.set(roadX(d) + offset, y, 110 - d); dummy.rotation.set(tiltX, -roadHeading(d), tiltZ); dummy.scale.set(sx, sy, sz); dummy.updateMatrix();
       batches.get(name)!.transforms.push(dummy.matrix.clone()); batches.get(name)!.colors.push(new THREE.Color(color));
     };
     const ribbon = (width: number, segments: number, across: number, landscape: boolean) => {
       const vertices: number[] = [], uv: number[] = [], colors: number[] = [], indices: number[] = [];
       for (let j = 0; j <= segments; j++) for (let k = 0; k <= across; k++) {
         const d = start + j / segments * CHUNK_LENGTH, offset = (k / across - .5) * width;
-        const y = landscape ? terrainY(offset, d) : roadHeight(d) + .1;
+        const y = landscape ? terrainAt(offset, d) : roadHeight(d) + .1;
         vertices.push(roadX(d) + offset, y, 110 - d); uv.push(k / across, d);
-        const c = new THREE.Color(0x87a66a).lerp(new THREE.Color(0x859397), THREE.MathUtils.smoothstep(y, 50, 180));
+        const c = new THREE.Color(0x87a66a).lerp(new THREE.Color(cinematic ? 0x7d9b83 : 0x859397), THREE.MathUtils.smoothstep(y, cinematic ? 100 : 50, cinematic ? 230 : 180));
         c.multiplyScalar(1 + Math.sin(d * .08 + offset * .07) * .055); colors.push(c.r, c.g, c.b);
         if (j < segments && k < across) { const a = j * (across + 1) + k, b = a + across + 1; indices.push(a, a + 1, b, a + 1, b + 1, b); }
       }
@@ -101,7 +105,7 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
     };
     const pavement = new THREE.Mesh(ribbon(14, 40, 1, false), roadMaterial); pavement.name = chunk === 0 ? 'race-road' : 'road-ribbon'; group.add(pavement);
     const groundMaterial = landscapeMaterial;
-    const ground = new THREE.Mesh(ribbon(1800, 20, budget.terrain, true), groundMaterial); ground.name = 'road-landscape'; group.add(ground);
+    const ground = new THREE.Mesh(ribbon(1800, cinematic ? 30 : 20, budget.terrain, true), groundMaterial); ground.name = 'road-landscape'; group.add(ground);
     for (let j = 0; j < 20; j++) {
       const d = start + j * 10, y = roadHeight(d);
       put('center-dashes', box, cream, d, 0, y + .14, .18, .03, 3);
@@ -116,18 +120,20 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
         }
       }
     }
+    if (!cinematic) {
     for (let i = 0; i < budget.trees; i++) {
       const d = start + random() * CHUNK_LENGTH, side = i % 2 ? -1 : 1;
       const offset = side * (11 + random() * (chunk % 4 === 0 ? 60 : 22));
-      const h = 9 + random() * 11, y = terrainY(offset, d), conifer = i % 3 !== 0;
+      const h = 9 + random() * 11, y = terrainAt(offset, d), conifer = i % 3 !== 0;
       put('tree-trunks', box, wood, d, offset, y + h * .25, .55, h * .5, .55);
       put(conifer ? 'conifers' : 'broadleaf', conifer ? pine : crown, green, d, offset, y + h * (conifer ? .2 : .7), h * (conifer ? .3 : .38), h * (conifer ? 1 : .42), h * .34, [0x476e50, 0x76914f, 0x4d7b60, 0x9a9e59][i % 4]);
       const bushD = d + 4, bushOffset = side * (13 + random() * 2);
-      put('bushes', crown, green, bushD, bushOffset, terrainY(bushOffset, bushD) + .8, 1.5, 1.5, 2, 0x8b9c59);
+      put('bushes', crown, green, bushD, bushOffset, terrainAt(bushOffset, bushD) + .8, 1.5, 1.5, 2, 0x8b9c59);
     }
     for (let i = 0; i < budget.flowers; i++) {
       const d = start + random() * CHUNK_LENGTH, offset = (i % 2 ? -1 : 1) * (7.6 + random() * 1);
       put('detail-flowers', rock, green, d, offset, roadHeight(d) + .45, .28, .5, .28, i % 2 ? 0xecc75e : 0xd6b8d4);
+    }
     }
     const signD = start + 65, signY = roadHeight(signD);
     // The support ends exactly at the bottom edge of the board.
@@ -136,8 +142,9 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
     const lettering = signLettering(signMessages[chunk % signMessages.length], cream);
     lettering.position.set(roadX(signD) - 10, signY + 3.4, 110 - signD);
     lettering.rotation.y = -roadHeading(signD); group.add(lettering);
+    if (!cinematic) {
     if ([2, 7, 10].includes(chunk)) for (let i = 0; i < 4; i++) {
-      const d = start + 30 + i * 36, offset = i % 2 ? -33 : 35, y = terrainY(offset, d), s = 7 + i % 2 * 2;
+      const d = start + 30 + i * 36, offset = i % 2 ? -33 : 35, y = terrainAt(offset, d), s = 7 + i % 2 * 2;
       put('chalets', box, plaster, d, offset, y + s * .5, s * 1.4, s, s);
       put('chalet-roofs', gable, roof, d, offset, y + s, s * 1.7, s * .8, s * 1.3);
       put('chalet-timber', box, wood, d - s * .51, offset, y + s * .65, s * 1.4, .45, .2);
@@ -152,6 +159,8 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
         put('bridge-cap', box, cream, d, side * 7.2, roadHeight(d) + 1.3, 1.1, .25, 6.1);
       }
     }
+    }
+    detailed?.decorate(chunk, start, put, random, terrainAt, roadHeight);
     for (const [name, batch] of batches) {
       const instances = new THREE.InstancedMesh(batch.geo, batch.material, batch.transforms.length); instances.name = name;
       batch.transforms.forEach((matrix, i) => { instances.setMatrixAt(i, matrix); instances.setColorAt(i, batch.colors[i]); }); instances.computeBoundingSphere();
@@ -163,22 +172,23 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low') {
   for (const side of [-1, 1]) { const post = new THREE.Mesh(box, cream); post.position.set(side * 7.5, 3.5, 0); post.scale.set(.3, 7, .3); finish.add(post); }
   const checks = new THREE.InstancedMesh(box, dark, 14);
   for (let i = 0; i < checks.count; i++) { dummy.position.set(-6.5 + i, 7 + (i % 2 ? .35 : -.35), .23); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, .7, .05); dummy.updateMatrix(); checks.setMatrixAt(i, dummy.matrix); } finish.add(checks); finish.visible = false;
+  const makeRig = cinematic ? createCinematicRaceRig : createCyclingRig;
   const rivals: THREE.Group[] = [], rigs: ReturnType<typeof createCyclingRig>[] = [];
   let player: THREE.Group | undefined, playerRig: ReturnType<typeof createCyclingRig> | undefined;
   let finishDistance: number | undefined;
   return {
     attachRiders(bike: THREE.Group) {
-      player = bike; playerRig = createCyclingRig(bike);
+      player = bike; playerRig = makeRig(bike);
       [0xc87155, 0x699dc7, 0xa18ac1, 0xe3b84b, 0x6caba0].forEach(color => {
         const rider = bike.clone(true); rider.name = 'simulated-racer';
         const materials = new Map<THREE.Material, THREE.Material>();
         rider.traverse(o => {
-          if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshLambertMaterial && [0x466e55, 0xdf8459].includes(o.material.color.getHex())) {
+          if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshLambertMaterial && ([0x466e55, 0xdf8459].includes(o.material.color.getHex()) || ['rider-jersey','team-accent'].includes(o.material.name))) {
             if (!materials.has(o.material)) { const material = o.material.clone(); material.color.setHex(color); materials.set(o.material, material); }
             o.material = materials.get(o.material)!;
           }
         });
-        rigs.push(createCyclingRig(rider)); scene.add(rider); rivals.push(rider);
+        rigs.push(makeRig(rider)); scene.add(rider); rivals.push(rider);
       });
     },
     update(race: RaceState, timed: boolean, dt = 1 / 60) {

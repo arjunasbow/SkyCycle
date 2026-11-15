@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { graphicsPixelCap, type GraphicsMode } from './graphics-settings';
-import type { Quality } from './world';
+import type { Quality, Environment } from './world';
 export interface Graphics {
   renderer: THREE.WebGLRenderer | import('three/webgpu').WebGPURenderer;
   label: string;
@@ -10,12 +10,12 @@ export interface Graphics {
   onFailure?(handler: () => void): void;
   dispose(): void;
 }
-export async function createGraphics(mode: GraphicsMode, quality: Quality): Promise<Graphics> {
+export async function createGraphics(mode: GraphicsMode, quality: Quality, environment: Environment = 'kaleidoscope'): Promise<Graphics> {
   let notice = '';
   if (mode === 'cinematic') {
     try {
       const { createCinematic } = await import('./cinematic');
-      return await createCinematic(quality);
+      return await createCinematic(quality, environment);
     } catch {
       notice = 'WebGPU could not start in this browser. Standard graphics is active; you can try Cinematic again in Flight settings.';
     }
