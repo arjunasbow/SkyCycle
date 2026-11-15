@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Quality } from './world';
+import { nearValleyRace } from './valley-race';
 
 /** Fixed seed makes artwork repeatable at each quality tier. */
 export function sceneryRandom(seed = 841) {
@@ -118,7 +119,7 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
     };
     for (let i = 0; i < budget.trees / 8; i++) {
       const z = centerZ + (random() - .5) * 430, x = (random() - .5) * 1400;
-      if (Math.abs(x) < 58 || Math.abs(x - riverX(z)) < 32 || (x > 100 && x < 235 && Math.abs(z - (120 - chunk * 430)) < 100)) continue;
+      if (nearValleyRace(x,z,20) || Math.abs(x) < 58 || Math.abs(x - riverX(z)) < 32 || (x > 100 && x < 235 && Math.abs(z - (120 - chunk * 430)) < 100)) continue;
       // Patchy woodland with clearings rather than a uniform grid.
       if (noise(x, z) < -.28) continue;
       const y = alpineHeight(x, z, floor), h = 10 + random() * 15, w = h * (.23 + random() * .14), angle = random() * Math.PI * 2;
@@ -132,12 +133,13 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
     for (let i = 0; i < 36; i++) {
       const z = centerZ + (random() - .5) * 430, x = i < 20 ? riverX(z) + (i % 2 ? -1 : 1) * (26 + random() * 8) : (random() - .5) * 1300;
       const y = alpineHeight(x, z, floor), s = 1 + random() * 3;
-      if (Math.abs(x) < 55) continue;
+      if (Math.abs(x) < 55 || nearValleyRace(x,z,14)) continue;
       if (!cinematic) put('rocks', rock, stone, x, y + s * .35, z, s * 1.5, s, s, random() * 6);
       put('detail-bush', crown, leaf, x + 4, y + 1, z, 2, 1.8, 2, random() * 6, 0x769466);
     }
     for (let i = 0; i < (cinematic ? Math.max(24, budget.flowers) : budget.flowers) / 8; i++) {
       const z = centerZ + (random() - .5) * 340, x = 65 + random() * 90;
+      if(nearValleyRace(x,z,10))continue;
       put('detail-flowers', flower ?? rock, flowerMat, x, floor(x, z) + .6, z, .45, .6, .45, 0, i % 2 ? 0xe9cc78 : 0xd7c4d6);
       if(cinematic) put('detail-flower-stems',box,leaf,x,floor(x,z)+.3,z,.045,.6,.045,0,0x58734c);
     }
@@ -172,7 +174,7 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
       const z = villageZ + 25 - i * 8, x = 164 + Math.sin(i * .24) * 20;
       put('paths', box, stone, x, floor(x, z) + .12, z, 4, .2, 9, Math.cos(i * .24) * -.5, 0xe4cfa9);
     }
-    if (chunk % 2 === 0) {
+    if (chunk % 2 === 0 && chunk !== 2) {
       const z = villageZ - 110, x = riverX(z);
       put('bridge', box, wood, x, 4.5, z, 64, 1.8, 9);
       if(cinematic && arch){

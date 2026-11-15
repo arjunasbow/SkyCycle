@@ -327,8 +327,16 @@ Whole-scene CPU geometry inventory before renderer preparation/culling (not fram
 
 | Quality | Triangles | Instance batches | Instances | Geometries |
 | --- | ---: | ---: | ---: | ---: |
-| Low | 240,744 | 211 | 3,683 | 50 |
-| Medium | 447,116 | 211 | 4,519 | 50 |
-| High | 578,536 | 211 | 5,417 | 50 |
+| Low | 250,436 | 212 | 3,887 | 81 |
+| Medium | 451,337 | 212 | 4,665 | 81 |
+| High | 586,721 | 212 | 5,581 | 81 |
 
 Validation: 126 tests, production build and Cloudflare deployment dry run pass. Added tests exercise reward timing/re-entry, route interpolation, bonus exclusion, ring hits/misses, pause/reduced effects/reset, fixed scene size, native material conversion, quality tiers, forward pedalling and attached-resource disposal. The graphics backend is mocked for preparation tests; rendered WebGPU appearance and iPhone/Bluefy performance remain to be verified on-device.
+
+### The road race glimpsed from the sky
+
+Valley now contains a single decorative race scene in both Standard and Cinematic: a left-to-right road across the meadows, an arched river bridge at z=-850, and a winding climb to a hillside FINISH banner and chequered line. The transverse route follows the existing ground, with embankment shoulders and an open bridge arch; it does not change the flight collision surface. Nearby trees and small vegetation are omitted along the road, and the previous enhanced bridge at this crossing is replaced rather than duplicated.
+
+Six small cyclists in coloured jerseys pedal along the road, with a leader gaining ground on the climb. Shared geometry and material-grouped static pieces keep their aerial silhouettes inexpensive; wheels and legs animate independently. They cross the finish and leave the scene before the ambient race repeats. Pause freezes the race, reduced effects keeps a still tableau, and unlimited rides reuse the same objects. The vignette adds roughly 11,252 triangles at Low and 14,148 at Medium/High before culling; the current whole-Valley inventory above includes it.
+
+Validation: 130 tests, production build, deployment dry run and diff check pass. Coverage verifies left-to-right routing, bridge height, uphill finish, upward road normals, rider progress and breakaway, pause/reduced effects, fixed object count across long sessions, unchanged targets, and complete resource disposal. Rendered appearance, visibility from the normal flight camera and phone performance still need on-device review.
