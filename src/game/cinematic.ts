@@ -6,6 +6,7 @@ import type { Graphics } from './graphics';
 import { AdaptiveResolution, graphicsPixelCap } from './graphics-settings';
 import type { Quality, Environment } from './world';
 import { prepareCinematicRoad } from './cinematic-road';
+import { prepareCinematicValley } from './cinematic-valley';
 import { distanceAt, routeX, routeY } from './kaleidoscope';
 import { lotusDistanceAt, lotusGapAt, mandalaDistanceAt } from './mandala-encounter';
 
@@ -15,7 +16,7 @@ export const CINEMATIC_LIGHTING = Object.freeze({
 });
 const colouredBatches = ['kaleidoscope-rings', 'kaleidoscope-frames', 'kaleidoscope-lanterns', 'kaleidoscope-flow-ribbons'];
 
-/** Opt-in WebGPU rendering for Kaleidoscope and Road race. Nothing is imported on the standard path. */
+/** Opt-in WebGPU rendering for Valley, Kaleidoscope and Road race. Nothing is imported on the standard path. */
 export async function createCinematic(quality: Quality, environment: Environment = 'kaleidoscope'): Promise<Graphics> {
   if (!('gpu' in navigator)) throw new Error('WebGPU unavailable');
   const renderer = new WebGPURenderer({ antialias: quality === 'high', powerPreference: 'high-performance', alpha: false });
@@ -41,13 +42,17 @@ export async function createCinematic(quality: Quality, environment: Environment
     onFailure(handler) { failureHandler = handler; if (lost) handler(); },
     renderer, label: 'WebGPU · CINEMATIC', notice: '',
     async prepare(scene, camera) {
-      if (environment === 'road') {
-        roadEffects = prepareCinematicRoad(scene, renderer, quality, camera, replaced);
+      if (environment === 'road' || environment === 'valley') {
+        roadEffects = environment === 'valley' ? prepareCinematicValley(scene, renderer, quality, camera, replaced) : prepareCinematicRoad(scene, renderer, quality, camera, replaced);
         renderer.toneMappingExposure = 1.0;
         scenePass = pass(scene, camera); const beauty = scenePass.getTextureNode();
         glow = bloom(beauty, .04, .2, 1.3);
         post = new PostProcessing(renderer); post.outputNode = vec4(beauty.rgb.add(glow.rgb.min(vec3(.003))), beauty.a);
-        await renderer.compileAsync(scene, camera); post.render(); return;
+        const bird = scene.getObjectByName('valley-curious-bird'), visible = bird?.visible;
+        if (bird) bird.visible = true;
+        try { await renderer.compileAsync(scene, camera); }
+        finally { if (bird) bird.visible = visible!; }
+        post.render(); return;
       }
       // Missing instance colours at compilation produce white materials in WebGPU.
       // Fail safely instead of preparing a graph that cannot read the later colours.
