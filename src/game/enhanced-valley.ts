@@ -15,7 +15,7 @@ export function alpineHeight(x: number, z: number, floor: (x: number, z: number)
   return floor(x, z) + edge * ridges;
 }
 
-export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (x: number, z: number) => number, riverX: (z: number) => number) {
+export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (x: number, z: number) => number, riverX: (z: number) => number, cinematic = false) {
   const random = sceneryRandom(), budget = enhancedBudget[quality];
   scene.background = new THREE.Color(0xc4d9df); scene.fog = new THREE.Fog(0xc4d9df, 360, 1590);
   // Reuse the world's lights, avoiding double illumination.
@@ -27,14 +27,29 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
   const mat = (color: number, flatShading = false) => new THREE.MeshLambertMaterial({ color, flatShading });
   const grass = mat(0xffffff), stone = mat(0x8c9690, true), wood = mat(0x69513f), leaf = mat(0xffffff), plaster = mat(0xffedcd), roof = mat(0x84534c), glass = mat(0x34515a);
   const gable = createGable();
-  const box = new THREE.BoxGeometry(1, 1, 1), rock = new THREE.IcosahedronGeometry(1, 0), crown = new THREE.IcosahedronGeometry(1, 1);
+  const box = new THREE.BoxGeometry(1, 1, 1), rock = new THREE.IcosahedronGeometry(1, 0);
+  const crown = cinematic ? new THREE.SphereGeometry(1, quality === 'low' ? 10 : 16, 10) : new THREE.IcosahedronGeometry(1, 1);
+  if (cinematic) {
+    const p = crown.getAttribute('position');
+    for (let i = 0; i < p.count; i++) {
+      const x=p.getX(i), y=p.getY(i), z=p.getZ(i), r=1+.07*Math.sin(x*5+z*3)+.04*Math.sin(y*7-z*4);
+      p.setXYZ(i,x*r,y*r,z*r);
+    }
+    crown.computeVertexNormals();
+  }
+  const flowerShape = new THREE.Shape();
+  for(let i=0;i<=40;i++){const a=i/40*Math.PI*2,r=.65+.24*Math.cos(a*5);if(i===0)flowerShape.moveTo(Math.cos(a)*r,Math.sin(a)*r);else flowerShape.lineTo(Math.cos(a)*r,Math.sin(a)*r);}flowerShape.closePath();
+  const flower = cinematic ? new THREE.ShapeGeometry(flowerShape,2) : undefined; flower?.rotateX(-Math.PI/2);
+  const flowerMat = cinematic ? new THREE.MeshLambertMaterial({color:0xffffff,side:THREE.DoubleSide}) : leaf;
+  const archShape = new THREE.Shape();archShape.moveTo(-32,0);archShape.lineTo(32,0);archShape.lineTo(32,-7);archShape.lineTo(21,-7);archShape.quadraticCurveTo(0,2,-21,-7);archShape.lineTo(-32,-7);archShape.closePath();
+  const arch = cinematic ? new THREE.ExtrudeGeometry(archShape,{depth:9,bevelEnabled:true,bevelSize:.12,bevelThickness:.12,bevelSegments:1,curveSegments:24}) : undefined; arch?.translate(0,0,-4.5);
   // Layered, irregular branches in one shared geometry rather than a single cone.
   const pine = new THREE.LatheGeometry([
     new THREE.Vector2(0, 0), new THREE.Vector2(.65, .08), new THREE.Vector2(.3, .34),
     new THREE.Vector2(.56, .3), new THREE.Vector2(.22, .6), new THREE.Vector2(.4, .55),
     new THREE.Vector2(.1, .83), new THREE.Vector2(.24, .78), new THREE.Vector2(0, 1.12),
-  ], 7);
-  const terrain = new THREE.PlaneGeometry(3200, 3600, budget.segments, Math.round(budget.segments * 1.3));
+  ], cinematic ? quality === 'low' ? 10 : 16 : 7);
+  const terrain = new THREE.PlaneGeometry(3200, 3600, Math.round(budget.segments * (cinematic ? 1.25 : 1)), Math.round(budget.segments * (cinematic ? 1.5 : 1.3)));
   terrain.rotateX(-Math.PI / 2); terrain.translate(0, 0, -1250);
   const positions = terrain.getAttribute('position'), colors: number[] = [];
   const meadow = new THREE.Color(0x83a667), earth = new THREE.Color(0xaaa17b), granite = new THREE.Color(0x78868b), snow = new THREE.Color(0xe6e9de);
@@ -71,7 +86,7 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
     waterVertices.push(x - width, .18, z, x + width, .18, z); uv.push(0, z, 1, z);
     if (i < 180) { const a = i * 2; indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
   }
-  const waterGeo = new THREE.BufferGeometry(); waterGeo.setAttribute('position', new THREE.Float32BufferAttribute(waterVertices, 3)); waterGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); waterGeo.setIndex(indices);
+  const waterGeo = new THREE.BufferGeometry(); waterGeo.setAttribute('position', new THREE.Float32BufferAttribute(waterVertices, 3)); waterGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); waterGeo.setIndex(indices); waterGeo.computeVertexNormals();
   const waterMat = new THREE.ShaderMaterial({ side: THREE.DoubleSide, fog: true, uniforms: { ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), time: { value: 0 } },
     vertexShader: `varying vec2 vUv;
       #include <fog_pars_vertex>
@@ -111,19 +126,20 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
       if (random() < .6) put('pines', pine, leaf, x, y + h * .2, z, w, h, w, angle, [0x315e50, 0x426c58, 0x527d61][i % 3]);
       else {
         put('crowns', crown, leaf, x, y + h * .7, z, w * 1.5, h * .4, w * 1.3, angle, [0x74934e, 0x98a45b, 0x5f874f, 0xc5ac62][i % 4]);
-        put('crowns', crown, leaf, x + w * .65, y + h * .6, z + w * .3, w, h * .29, w, angle, 0x8c9d56);
+        if (!cinematic) put('crowns', crown, leaf, x + w * .65, y + h * .6, z + w * .3, w, h * .29, w, angle, 0x8c9d56);
       }
     }
     for (let i = 0; i < 36; i++) {
       const z = centerZ + (random() - .5) * 430, x = i < 20 ? riverX(z) + (i % 2 ? -1 : 1) * (26 + random() * 8) : (random() - .5) * 1300;
       const y = alpineHeight(x, z, floor), s = 1 + random() * 3;
       if (Math.abs(x) < 55) continue;
-      put('rocks', rock, stone, x, y + s * .35, z, s * 1.5, s, s, random() * 6);
+      if (!cinematic) put('rocks', rock, stone, x, y + s * .35, z, s * 1.5, s, s, random() * 6);
       put('detail-bush', crown, leaf, x + 4, y + 1, z, 2, 1.8, 2, random() * 6, 0x769466);
     }
-    for (let i = 0; i < budget.flowers / 8; i++) {
+    for (let i = 0; i < (cinematic ? Math.max(24, budget.flowers) : budget.flowers) / 8; i++) {
       const z = centerZ + (random() - .5) * 340, x = 65 + random() * 90;
-      put('detail-flowers', rock, leaf, x, floor(x, z) + .6, z, .45, .6, .45, 0, i % 2 ? 0xe9cc78 : 0xd7c4d6);
+      put('detail-flowers', flower ?? rock, flowerMat, x, floor(x, z) + .6, z, .45, .6, .45, 0, i % 2 ? 0xe9cc78 : 0xd7c4d6);
+      if(cinematic) put('detail-flower-stems',box,leaf,x,floor(x,z)+.3,z,.045,.6,.045,0,0x58734c);
     }
     const villageZ = 120 - chunk * 430;
     // Gabled chalets with timber bands, windows, doors and stone chimneys.
@@ -136,6 +152,20 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
       put('chimneys', box, stone, x + s * .45, y + s * 1.4, z, 1.2, s * .65, 1.2);
       for (const dx of [-.43, .43]) for (const dy of [.3, .78]) put('windows', box, glass, x + s * dx, y + s * dy, z + s * .66, s * .23, s * .2, .15);
       put('doors', box, wood, x, y + s * .22, z + s * .66, s * .2, s * .44, .2);
+      if (cinematic) {
+        for(const dx of [-.43,.43])for(const dy of [.3,.78]){
+          for(const side of [-1,1])put('detail-chalet-shutters',box,wood,x+s*(dx+side*.16),y+s*dy,z+s*.68,s*.075,s*.25,.22,0,i%2?0x657b64:0x796554);
+          put('detail-window-sills',box,plaster,x+s*dx,y+s*(dy-.12),z+s*.7,s*.3,.22,.65);
+          put('detail-window-mullions',box,plaster,x+s*dx,y+s*dy,z+s*.68,.10,s*.2,.18);
+        }
+        put('detail-balcony',box,wood,x,y+s*.57,z+s*.8,s*1.1,.3,s*.32);
+        put('detail-balcony-rail',box,wood,x,y+s*.72,z+s*.96,s*1.15,.18,.18);
+        for(let k=-4;k<=4;k++)put('detail-balcony-balusters',box,wood,x+k*s*.12,y+s*.65,z+s*.96,.13,s*.16,.13);
+        put('detail-roof-ridge',box,roof,x,y+s*1.65,z,.25,.25,s*1.65);
+        for(const side of [-1,1])put('detail-eaves',box,wood,x+side*s*.85,y+s,z,.23,.3,s*1.65);
+        for(const dx of [-.7,0,.7])put('detail-timber-posts',box,wood,x+s*dx,y+s*.5,z+s*.66,.24,s,.18);
+        for(let row=0;row<4;row++)put('detail-roof-courses',gable,roof,x,y+s*(1+row*.01),z+(row-1.5)*s*.35,s*1.78,s*.65,.12,0,0xc8b09a);
+      }
     }
     // A low winding footpath stays well below the targets.
     for (let i = 0; i < 14; i++) {
@@ -145,6 +175,14 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
     if (chunk % 2 === 0) {
       const z = villageZ - 110, x = riverX(z);
       put('bridge', box, wood, x, 4.5, z, 64, 1.8, 9);
+      if(cinematic && arch){
+        put('valley-bridge-arches',arch,stone,x,4.2,z,1,1,1);
+        for(const dz of [-4.6,4.6])for(let k=-3;k<=3;k++)put('detail-bridge-caps',box,stone,x+k*9.5,5.55,z+dz,9.2,.35,.8);
+        for(const dz of [-4.62,4.62])for(let k=0;k<=16;k++){
+          const angle=k/16*Math.PI;
+          put('detail-bridge-voussoirs',box,plaster,x+Math.cos(angle)*21, -2.6+Math.sin(angle)*6,z+dz,1.4,.8,.22);
+        }
+      }
       for (const dz of [-4.3, 4.3]) {
         put('bridge', box, wood, x, 7.5, z + dz, 66, .5, .5);
         for (let j = -3; j <= 3; j++) put('bridge', box, wood, x + j * 10, 6, z + dz, .6, 3, .6);
@@ -166,7 +204,7 @@ export function addEnhancedValley(scene: THREE.Scene, quality: Quality, floor: (
       instances.computeBoundingSphere(); (key.startsWith('detail-') ? detailGroup : group).add(instances);
     }
   }
-  const cloudMat = mat(0xfff3dc), clouds = new THREE.InstancedMesh(crown, cloudMat, quality === 'low' ? 60 : 100); clouds.name = 'alpine-clouds';
+  const cloudMat = mat(cinematic ? 0xe0e5e1 : 0xfff3dc), clouds = new THREE.InstancedMesh(crown, cloudMat, quality === 'low' ? 60 : 100); clouds.name = 'alpine-clouds';
   for (let i = 0; i < clouds.count; i++) {
     const cluster = Math.floor(i / 5), puff = i % 5;
     // Hashes keep puffs in the same cloud while varying silhouettes.

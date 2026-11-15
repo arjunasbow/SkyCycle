@@ -239,7 +239,7 @@ The bird/light-wave/starfield revision passes 88 tests, the production build and
 
 ## Cinematic WebGPU experiment
 
-In **World: Kaleidoscope** or **World: Road race**, open **Flight settings > Graphics style > Cinematic · WebGPU experiment**. This is an opt-in, remembered graphics preference. Standard WebGL remains the default. Valley and Space continue using it. Changing graphics restarts the ride; select Standard to compare or return. The footer shows the actual active backend: **WebGPU · CINEMATIC** or **WebGL**. A loading state prevents starting until graphics is prepared. Unsupported adapters, initialization/scene preparation failures and device loss return to Standard with a visible notice and Retry Cinematic control.
+In **World: Valley**, **World: Kaleidoscope** or **World: Road race**, open **Flight settings > Graphics style > Cinematic · WebGPU experiment**. This is an opt-in, remembered graphics preference. Standard WebGL remains the default. Space continues using it. Valley now also supports Cinematic. Changing graphics restarts the ride; select Standard to compare or return. The footer shows the actual active backend: **WebGPU · CINEMATIC** or **WebGL**. A loading state prevents starting until graphics is prepared. Unsupported adapters, initialization/scene preparation failures and device loss return to Standard with a visible notice and Retry Cinematic control.
 
 Cinematic uses Three.js r181 WebGPURenderer, TSL materials and node-based bloom. Rings and approaching light bands, lanterns, the bird and lotus edges receive soft HDR glow; fixed translucent light veils add atmosphere to the mandala encounter chamber and recycle across unlimited journeys. Liquid Glass uses an equivalent TSL shader, with simulation-time animation so pause/reduced effects remain meaningful. These are stylised light veils, not volumetric ray marching. Reduced effects freezes shader animation and reduces glow. Bluetooth, audio, routes, scoring and flight physics are unchanged.
 
@@ -316,3 +316,19 @@ Cinematic Road omits the small triangular grass tufts and riverbank reeds, retai
 Kaleidoscope’s bird starts hidden. After 30 uninterrupted seconds in the tunnel it glides in from ahead and to the side, then follows the bicycle. Exiting starts its departure immediately; returning requires a fresh 30-second streak, independently of scoring’s grace period. Reduced effects uses an immediate appearance/departure. Pause freezes the entrance/exit animation and restarting hides the bird. Cinematic precompiles the hidden bird’s materials before the ride. Scoring, input and the other worlds are unchanged.
 
 Validation: 118 tests, production build and Cloudflare deployment dry run pass. Regression coverage includes the initial delay, departure, fresh streak, pause and restart, plus absence of triangular road decoration. Appearance and performance still require on-device review.
+
+### Cinematic Valley, curious bird and distant zeppelins
+
+Valley now supports the remembered Cinematic WebGPU option. It uses Enhanced Valley artwork even if Classic is selected; Standard retains the saved comparison style. Cinematic adds denser mountain terrain, smoothly shaded irregular tree crowns without separate lobes, layered conifers, five-petal flowers, chalet shutters/sills/timberwork/balconies and roof detail, arched bridge masonry, smooth striped balloons with basket rails/ropes, and smoother golden rings. Repeated decorative rocks are omitted. Native node water and meadow shading use the restrained daylight pipeline with bounded shadows (Medium/High) and adaptive resolution. The detailed bicycle retains its flying rotor and gains the articulated rider, cadence-driven forward pedalling and rotating spoked wheels. Collision terrain, target layout, scores, steering and effort mapping stay unchanged.
+
+In both Standard and Cinematic Valley, an ordinary robin-like companion joins after 30 active seconds following the invisible route between mandatory targets. A small steering tolerance and hysteresis avoid boundary flicker. Leaving the route or missing a ring resets the wait and starts the bird’s departure; a fresh uninterrupted 30 seconds earns it again. Side bonus balloons do not influence the route. The bird alternates wingbeats and short glides, moving inquisitively beside the bicycle. Pause freezes its motion; reset hides it, and course loops retain earned progress. Reduced effects keeps it still with immediate arrival/departure. Two distant silver-green zeppelins drift outside the riding corridor, with gondolas, cabin windows, hull seams and tail fins. Bird and airship static pieces are merged by material; nothing is spawned per frame.
+
+Whole-scene CPU geometry inventory before renderer preparation/culling (not frame-rate measurements):
+
+| Quality | Triangles | Instance batches | Instances | Geometries |
+| --- | ---: | ---: | ---: | ---: |
+| Low | 240,744 | 211 | 3,683 | 50 |
+| Medium | 447,116 | 211 | 4,519 | 50 |
+| High | 578,536 | 211 | 5,417 | 50 |
+
+Validation: 126 tests, production build and Cloudflare deployment dry run pass. Added tests exercise reward timing/re-entry, route interpolation, bonus exclusion, ring hits/misses, pause/reduced effects/reset, fixed scene size, native material conversion, quality tiers, forward pedalling and attached-resource disposal. The graphics backend is mocked for preparation tests; rendered WebGPU appearance and iPhone/Bluefy performance remain to be verified on-device.

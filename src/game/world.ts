@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { addKaleidoscope } from './kaleidoscope-scene';
-import { addTunnelRider } from './tunnel-rider';
+import { addTunnelRider, createDetailedCyclingRig } from './tunnel-rider';
 import { upgradeRoadBike } from './cinematic-bike';
 import type { FlowState } from './kaleidoscope';
 import { BALLOON_OFFSET_Y, BALLOON_RADII, createCourse, type Target } from './flight';
 import { addSpaceScenery } from './space';
 import { addRoadScenery } from './road';
 import { addEnhancedValley } from './enhanced-valley';
+import { addValleyWildlife } from './valley-wildlife';
+import type { ValleyCompanionState } from './valley-companion';
 import type { RaceState } from './race';
 export type Quality = 'low' | 'medium' | 'high';
 export type ValleyStyle = 'classic' | 'enhanced';
@@ -18,7 +20,7 @@ export function terrainHeight(x: number, z: number) {
   return Math.max(-2, (Math.sin(x * .017 + z * .003) * 6 + Math.cos(z * .011) * 4) * Math.min(1, d / 90) + Math.max(0, d - 220) * .2 - 2);
 }
 const colors = { ground: 0x96af7c, tree: 0x466e55, trunk: 0x716b4d, water: 0x62aaa3, roof: 0xbc7054, cream: 0xece1bb, gold: 0xf5b54b };
-export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateTunnel?: (time: number, flow: FlowState, reduced: boolean) => void; updateRace?: (race: RaceState, timed: boolean, dt?: number) => void; update: (time: number, thrust: number, dt: number, cadence?: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
+export interface World { scene: THREE.Scene; bike: THREE.Group; propeller: THREE.Group; wheels: THREE.Mesh[]; targets: Target[]; targetObjects: THREE.Object3D[]; updateValley?: (time: number, state: ValleyCompanionState, reduced: boolean) => void; resetValley?: () => void; updateTunnel?: (time: number, flow: FlowState, reduced: boolean) => void; updateRace?: (race: RaceState, timed: boolean, dt?: number) => void; update: (time: number, thrust: number, dt: number, cadence?: number) => void; resetTargets: () => void; celebrate: (index: number) => void; dispose: () => void; }
 export function createWorld(quality: Quality, environment: Environment = 'valley', valleyStyle: ValleyStyle = 'enhanced', cinematic = false): World {
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc6dcd3); scene.fog = new THREE.Fog(0xc6dcd3, 220, quality === 'low' ? 1050 : 1550);
   scene.add(new THREE.HemisphereLight(0xfff2dc, 0x68816a, 2.4));
@@ -31,7 +33,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   };
   // Scenery is independent of the bike, targets and flight model.
   let animateScenery = (_time: number) => {};
-  if (environment === 'valley' && valleyStyle === 'classic') {
+  if (environment === 'valley' && valleyStyle === 'classic' && !cinematic) {
   const terrain = new THREE.PlaneGeometry(1500, 3100, quality === 'low' ? 55 : 90, quality === 'low' ? 90 : 150); terrain.rotateX(-Math.PI / 2); terrain.translate(0, 0, -1200);
   const pos = terrain.getAttribute('position'); const vertexColors = [];
   for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), z = pos.getZ(i), h = terrainHeight(x, z); pos.setY(i, h); const c = new THREE.Color(colors.ground); c.offsetHSL(.015 * Math.sin(z), -.02, Math.sin(x * .03 + z * .02) * .025); vertexColors.push(c.r, c.g, c.b); }
@@ -76,13 +78,39 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   for (let i = 0; i < 24; i++) { const x = (random() - .5) * 1700, y = 200 + random() * 130, z = 400 - random() * 3100; for (let j = 0; j < 3; j++) mesh(sphere, cloudMat, x + j * 20, y + (j === 1 ? 6 : 0), z, 28, 12 + random() * 9, 15); }
   }
   let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  const enhanced = environment === 'valley' && valleyStyle === 'enhanced' ? addEnhancedValley(scene, quality, terrainHeight, riverX) : undefined;
+  const enhanced = environment === 'valley' && (valleyStyle === 'enhanced' || cinematic) ? addEnhancedValley(scene, quality, terrainHeight, riverX, cinematic) : undefined;
+  const wildlife = environment === 'valley' ? addValleyWildlife(scene, quality) : undefined;
   const space = environment === 'space' ? addSpaceScenery(scene, quality) : undefined;
   const road = environment === 'road' ? addRoadScenery(scene, quality, cinematic) : undefined;
   const kaleidoscope = environment === 'kaleidoscope' ? addKaleidoscope(scene, quality) : undefined;
+  const detailedValley = environment === 'valley' && cinematic;
+  const balloonGeometry = detailedValley ? new THREE.SphereGeometry(1, quality === 'low' ? 24 : 40, 20) : sphere;
+  if (detailedValley) {
+    const pos=balloonGeometry.getAttribute('position'), colours=[];
+    for(let i=0;i<pos.count;i++){
+      const stripe=.88+.12*Math.pow(Math.abs(Math.cos(Math.atan2(pos.getZ(i),pos.getX(i))*6)),.2);
+      colours.push(stripe,stripe,stripe);
+    }
+    balloonGeometry.setAttribute('color',new THREE.Float32BufferAttribute(colours,3));
+  }
+  const balloonMaterial=(color:number)=>material(color,detailedValley?{flatShading:false,vertexColors:true}:{});
+  const wicker=detailedValley?new THREE.MeshLambertMaterial({color:0x9b7850}):trunkMat;
+  const ropeGeometry=detailedValley?new THREE.CylinderGeometry(1,1,1,5):box;
+  const balloonDetail=(group:THREE.Group,rx:number,ry:number,centerY:number,basketY:number,basketSize:number)=>{
+    if(!detailedValley)return;
+    // Shared basket rails and four ropes retain the original target extents.
+    for(const side of [-1,1])for(const layer of [-.5,.2,.9]){
+      mesh(box,wicker,0,basketY+layer,basketSize*.5*side,basketSize,.18,.18,group);
+      mesh(box,wicker,basketSize*.5*side,basketY+layer,0,.18,.18,basketSize,group);
+    }
+    for(const sx of [-1,1])for(const sz of [-1,1]){
+      const a=new THREE.Vector3(sx*basketSize*.42,basketY+1,sz*basketSize*.42),b=new THREE.Vector3(sx*rx*.25,centerY-ry*.88,sz*rx*.25),delta=b.clone().sub(a);
+      const rope=mesh(ropeGeometry,creamMat,0,0,0,.045,delta.length(),.045,group);rope.position.copy(a).add(b).multiplyScalar(.5);rope.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
+    }
+  };
   const targets = environment === 'road' || kaleidoscope ? [] : createCourse(), targetObjects: THREE.Object3D[] = [];
   const polishedGold = enhanced ? new THREE.MeshStandardMaterial({ color: 0xffc65c, metalness: .45, roughness: .3, emissive: 0xb77a18, emissiveIntensity: .22 }) : goldMat;
-  const ringGeo = new THREE.TorusGeometry(6.5, .45, enhanced ? 10 : 6, quality === 'low' ? 24 : 40);
+  const ringGeo = new THREE.TorusGeometry(6.5, .45, detailedValley ? 14 : enhanced ? 10 : 6, detailedValley ? 64 : quality === 'low' ? 24 : 40);
   for (let i = 0; i < targets.length; i++) {
     const target = targets[i], { x, y, z } = target;
     const group = new THREE.Group(); group.position.set(x, y, z); scene.add(group); targetObjects.push(group);
@@ -90,9 +118,10 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
       mesh(ringGeo, polishedGold, 0, 0, 0, 1, 1, 1, group);
       for (let j = 0; j < 4; j++) { const angle = j * Math.PI / 2; mesh(sphere, creamMat, Math.sin(angle) * 6.5, Math.cos(angle) * 6.5, 0, .65, .65, .65, group); }
     } else {
-      const balloonMat = material(i % 2 ? 0xe39668 : 0xd6b55c);
-      mesh(sphere, balloonMat, 0, BALLOON_OFFSET_Y, 0, ...BALLOON_RADII, group); mesh(box, trunkMat, 0, -9, 0, 3.5, 2.5, 3.5, group);
+      const balloonMat = balloonMaterial(i % 2 ? 0xe39668 : 0xd6b55c);
+      mesh(balloonGeometry, balloonMat, 0, BALLOON_OFFSET_Y, 0, ...BALLOON_RADII, group); mesh(box, trunkMat, 0, -9, 0, 3.5, 2.5, 3.5, group);
       for (const dx of [-1.5, 1.5]) mesh(box, creamMat, dx, -6.5, 0, .12, 5, .12, group);
+      balloonDetail(group,BALLOON_RADII[0],BALLOON_RADII[1],BALLOON_OFFSET_Y,-9,3.5);
     }
   }
   // Side balloons are collectible bonus targets too; they do not redirect auto-steering.
@@ -100,7 +129,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
     const x = (i % 2 ? -1 : 1) * (180 + random() * 100), y = 85 + random() * 60, z = -200 - i * 390;
     const group = new THREE.Group(); group.position.set(x, y, z); scene.add(group); targetObjects.push(group);
     targets.push({ x, y, z, radius: 13, hit: false, kind: 'balloon', bonus: true, balloonOffsetY: 0, balloonRadii: [13, 17, 13] });
-    mesh(sphere, material(i % 2 ? 0xd89c74 : 0xe4cc8d), 0, 0, 0, 13, 17, 13, group); mesh(box, trunkMat, 0, -22, 0, 5, 4, 5, group);
+    mesh(balloonGeometry, balloonMaterial(i % 2 ? 0xd89c74 : 0xe4cc8d), 0, 0, 0, 13, 17, 13, group); mesh(box, trunkMat, 0, -22, 0, 5, 4, 5, group); balloonDetail(group,13,17,0,-22,5);
   }
   // One reusable particle pool keeps hit feedback inexpensive on the phone.
   const burstPositions = new Float32Array(24 * 3), burstVelocity = new Float32Array(24 * 3);
@@ -125,7 +154,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   }
   for (const [a, b] of [[[0, .72, .95], [0, 1.65, .35]], [[0, 1.65, .35], [0, .72, -.05]], [[0, .72, -.05], [0, .72, .95]], [[0, .72, -.05], [0, 1.6, -.85]], [[0, 1.65, .35], [0, 1.6, -.85]], [[0, 1.8, -.9], [0, .72, -.95]]]) tube(a, b, .065, orange);
   mesh(box, dark, 0, 1.8, .37, .5, .12, .55, bike); tube([-.45, 1.94, -.85], [.45, 1.94, -.85], .05, metal);
-  const tunnelRider = kaleidoscope ? addTunnelRider(bike, quality) : undefined;
+  let tunnelRider = kaleidoscope ? addTunnelRider(bike, quality) : undefined;
   if (!kaleidoscope) {
   // Stylized rider: cream helmet, jacket and articulated legs.
   mesh(sphere, creamMat, 0, 2.85, -.15, .32, .35, .34, bike).name = 'rider-helmet'; tube([0, 1.9, .3], [0, 2.55, -.05], .24, treeMat).name = 'rider-torso';
@@ -171,11 +200,21 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
     mesh(box, orange, 0, 2.29, .19, .37, .46, .2, bike);
     for (const side of [-1, 1]) mesh(box, orange, side * 1.05, 0, 0, .28, .16, .14, propeller);
   }
+  if (environment === 'valley' && cinematic) {
+    // Retain the flying bicycle's rotor while replacing its frame and articulated rider.
+    bike.remove(propeller);
+    const detailedWheels = upgradeRoadBike(bike, quality); wheels.splice(0, wheels.length, ...detailedWheels);
+    bike.name = 'cinematic-valley-bike'; bike.add(propeller);
+    bike.getObjectByName('bike-contact-shadow')!.visible = false;
+    const shaftMaterial = new THREE.MeshStandardMaterial({color:0xafbdba,metalness:.5,roughness:.35});
+    tube([0,1.5,-.85],[0,1.5,-1.85],.07,shaftMaterial);
+    tunnelRider = createDetailedCyclingRig(bike);
+  }
   if (road && cinematic) { const detailedWheels = upgradeRoadBike(bike, quality); wheels.splice(0, wheels.length, ...detailedWheels); propeller.clear(); }
   if (road) { bike.scale.setScalar(1.25); propeller.visible = false; road.attachRiders(bike); }
   const resetTargets = () => { tunnelRider?.reset(); burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {
-    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate, updateRace: road?.update, updateTunnel: kaleidoscope ? (time, flow, reduced) => kaleidoscope.update(time, bike.position, flow, reduced) : undefined,
+    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate, resetValley: wildlife?.reset, updateValley: wildlife ? (time, state, reduced) => wildlife.update(time, bike, state, reduced) : undefined, updateRace: road?.update, updateTunnel: kaleidoscope ? (time, flow, reduced) => kaleidoscope.update(time, bike.position, flow, reduced) : undefined,
     update(time, thrust, dt, cadence) {
       tunnelRider?.update(cadence ?? (thrust > .01 ? 80 * Math.min(1.5, thrust) : 0), dt);
       if (burst.visible) {
@@ -185,7 +224,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
       }
       if (!space) propeller.rotation.z += dt * (thrust * 38 + 1);
       exhausts.forEach((exhaust, i) => { exhaust.scale.z = .18 + Math.min(2, Math.max(0, thrust)) * (.85 + .06 * Math.sin(time * 32 + i * 2)); });
-      if (!road) wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); enhanced?.update(time, bike.position); space?.update(time); },
+      if (!road) wheels.forEach(w => { const wheel = environment === 'valley' && cinematic ? w.parent! : w; wheel.rotation.z += dt * thrust * 6 * (environment === 'valley' && cinematic ? -1 : 1); }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); enhanced?.update(time, bike.position); space?.update(time); },
     dispose() { kaleidoscope?.dispose(); const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
   };
 }

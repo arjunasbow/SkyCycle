@@ -3,7 +3,7 @@ import { MeshBasicNodeMaterial, MeshLambertNodeMaterial, MeshStandardNodeMateria
 import { color, float, fract, instanceIndex, mix, positionLocal, positionWorld, sin, smoothstep, uniform, uv, vec3 } from 'three/tsl';
 import type { Quality } from './world';
 /** Native WebGPU road shaders, a daylight sky and bounded, infrequently refreshed scenery shadows. */
-export function prepareCinematicRoad(scene:THREE.Scene,renderer:WebGPURenderer,quality:Quality,camera:THREE.Camera,replaced:Set<THREE.Material>) {
+export function prepareCinematicRoad(scene:THREE.Scene,renderer:WebGPURenderer,quality:Quality,camera:THREE.Camera,replaced:Set<THREE.Material>, valley = false) {
   const time=uniform(0), cache=new Map<THREE.Material,THREE.Material>();
   const sun=scene.children.find(object=>object instanceof THREE.DirectionalLight) as THREE.DirectionalLight;
   const shadows=quality!=='low'; renderer.shadowMap.enabled=shadows; renderer.shadowMap.type=THREE.PCFShadowMap;
@@ -32,7 +32,7 @@ export function prepareCinematicRoad(scene:THREE.Scene,renderer:WebGPURenderer,q
         const wave=sin(positionWorld.x.mul(.22).add(time.mul(.7)).add(sin(positionWorld.z.mul(.35).sub(time.mul(.4))))).mul(.5).add(.5);
         water.colorNode=mix(color(0x3f7a83),color(0x77a8ac),wave);material=water;cache.set(original,material);replaced.add(original);}
       object.material=material;
-    }else if(/conifers|broadleaf|bushes|detail-grass|riverbank-reeds/.test(object.name)){
+    }else if(/conifers|broadleaf|bushes|detail-grass|riverbank-reeds|^pines$|^crowns$/.test(object.name)){
       let material=cache.get(original);
       if(!material){const leaf=new MeshLambertNodeMaterial({color:(original as THREE.MeshLambertMaterial).color,side:original.side});
         const bend=positionLocal.y.max(0).pow(2).mul(.017);
@@ -42,7 +42,7 @@ export function prepareCinematicRoad(scene:THREE.Scene,renderer:WebGPURenderer,q
       object.material=material;
     }
     object.receiveShadow=shadows && !object.name.includes('contact-shadow');
-    object.castShadow=shadows && /tree-trunks|tree-branches|conifers|broadleaf|chalets|chalet-roofs|chimney|bridge-arches|bridge-stone|village-tower|tower-roof/.test(object.name);
+    object.castShadow=shadows && /tree-trunks|tree-branches|conifers|broadleaf|chalets|chalet-roofs|chimney|bridge-arches|bridge-stone|village-tower|tower-roof|^trunks$|^pines$|^crowns$|^houses$|^roofs$|^ruins$/.test(object.name);
   });
   // A source material may still be used by unmodified flower/field batches.
   scene.traverse(object=>{if(object instanceof THREE.Mesh){for(const material of Array.isArray(object.material)?object.material:[object.material])replaced.delete(material);}});
@@ -52,7 +52,7 @@ export function prepareCinematicRoad(scene:THREE.Scene,renderer:WebGPURenderer,q
   const clouds=new THREE.Group();clouds.name='cinematic-road-clouds';scene.add(clouds);
   const cloudGeo=new THREE.SphereGeometry(1,quality==='low'?10:16,10),cloudMat=new THREE.MeshLambertMaterial({color:0xd9e0df});
   const cloudCount=quality==='low'?3:quality==='medium'?5:8;
-  for(let i=0;i<cloudCount;i++)for(let j=0;j<4;j++){const puff=new THREE.Mesh(cloudGeo,cloudMat);puff.position.set(Math.sin(i*2.1)*620+j*23,185+(i%3)*35+(j%2)*8,-260-i*110);puff.scale.set(42,12+(j%2)*6,24);clouds.add(puff);}
+  for(let i=0;i<(valley?0:cloudCount);i++)for(let j=0;j<4;j++){const puff=new THREE.Mesh(cloudGeo,cloudMat);puff.position.set(Math.sin(i*2.1)*620+j*23,185+(i%3)*35+(j%2)*8,-260-i*110);puff.scale.set(42,12+(j%2)*6,24);clouds.add(puff);}
   const sunlightOffset=new THREE.Vector3(-65,115,55),focus=new THREE.Vector3(),lastFocus=new THREE.Vector3(Infinity,Infinity,Infinity);let shadowAge=1;
   const update=(view:THREE.Camera,elapsed:number,reduced:boolean,dt:number)=>{
     time.value=reduced?0:elapsed;sky.position.copy(view.position);clouds.position.set(view.position.x*.12+(reduced?0:Math.sin(elapsed*.008)*20),0,view.position.z);
