@@ -8,6 +8,7 @@ import { addSpaceScenery } from './space';
 import { addRoadScenery } from './road';
 import { addEnhancedValley } from './enhanced-valley';
 import { addValleyWildlife } from './valley-wildlife';
+import { addValleyRace, nearValleyRace } from './valley-race';
 import type { ValleyCompanionState } from './valley-companion';
 import type { RaceState } from './race';
 export type Quality = 'low' | 'medium' | 'high';
@@ -50,7 +51,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   const count = quality === 'low' ? 260 : quality === 'medium' ? 480 : 740;
   const trees = new THREE.InstancedMesh(cone, treeMat, count), trunks = new THREE.InstancedMesh(box, trunkMat, count); let index = 0;
   while (index < count) {
-    const x = (random() - .5) * 1250, z = 300 - random() * 2950; if (Math.abs(x - riverX(z)) < 36 || Math.abs(x) < 35) continue;
+    const x = (random() - .5) * 1250, z = 300 - random() * 2950; if (Math.abs(x - riverX(z)) < 36 || Math.abs(x) < 35 || nearValleyRace(x,z,20)) continue;
     const size = 5 + random() * 8, y = terrainHeight(x, z);
     dummy.position.set(x, y + size * .8, z); dummy.rotation.set(0, random() * 6, 0); dummy.scale.set(size * .43, size * 1.4, size * .43); dummy.updateMatrix(); trees.setMatrixAt(index, dummy.matrix);
     dummy.position.y = y + size * .22; dummy.scale.set(.8, size * .6, .8); dummy.updateMatrix(); trunks.setMatrixAt(index++, dummy.matrix);
@@ -79,6 +80,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   }
   let seed = 57; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   const enhanced = environment === 'valley' && (valleyStyle === 'enhanced' || cinematic) ? addEnhancedValley(scene, quality, terrainHeight, riverX, cinematic) : undefined;
+  const valleyRace = environment === 'valley' ? addValleyRace(scene, quality, terrainHeight) : undefined;
   const wildlife = environment === 'valley' ? addValleyWildlife(scene, quality) : undefined;
   const space = environment === 'space' ? addSpaceScenery(scene, quality) : undefined;
   const road = environment === 'road' ? addRoadScenery(scene, quality, cinematic) : undefined;
@@ -214,7 +216,7 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
   if (road) { bike.scale.setScalar(1.25); propeller.visible = false; road.attachRiders(bike); }
   const resetTargets = () => { tunnelRider?.reset(); burst.visible = false; targets.forEach((t, i) => { t.hit = false; targetObjects[i].visible = true; }); };
   return {
-    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate, resetValley: wildlife?.reset, updateValley: wildlife ? (time, state, reduced) => wildlife.update(time, bike, state, reduced) : undefined, updateRace: road?.update, updateTunnel: kaleidoscope ? (time, flow, reduced) => kaleidoscope.update(time, bike.position, flow, reduced) : undefined,
+    scene, bike, propeller, wheels, targets, targetObjects, resetTargets, celebrate, resetValley: wildlife?.reset, updateValley: wildlife ? (time, state, reduced) => { wildlife.update(time, bike, state, reduced); valleyRace?.update(time, reduced); } : undefined, updateRace: road?.update, updateTunnel: kaleidoscope ? (time, flow, reduced) => kaleidoscope.update(time, bike.position, flow, reduced) : undefined,
     update(time, thrust, dt, cadence) {
       tunnelRider?.update(cadence ?? (thrust > .01 ? 80 * Math.min(1.5, thrust) : 0), dt);
       if (burst.visible) {
