@@ -112,7 +112,7 @@ it('replaces the dotted trail with a gliding bird and a stable exterior starfiel
   const before = bird.position.clone(); world.updateTunnel!(2, flow, false);
   expect(bird.position.y).not.toBe(before.y);
   world.bike.position.y -= 40; world.updateTunnel!(2, flow, false);
-  expect(bird.position.y).toBeCloseTo(before.y - 40 + .85 * (Math.sin(1.7) - Math.sin(.85)));
+  expect(bird.position.y).toBeCloseTo(before.y - 40 + .7 * (Math.sin(3.6) - Math.sin(1.8)) + .6 * (Math.sin(.82) - Math.sin(.41)));
   world.updateTunnel!(2, flow, true); const still = bird.position.clone();
   world.updateTunnel!(12, flow, true); expect(bird.position).toEqual(still);
   world.dispose();
