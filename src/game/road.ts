@@ -116,7 +116,8 @@ export function addRoadScenery(scene: THREE.Scene, quality: Quality = 'low', cin
         if (j % 2 === 0) {
           put('reflectors', box, cream, d + 3, side * 7.8, roadHeight(d + 3) + .65, .18, 1.4, .22);
           put('reflector-tops', box, dark, d + 3, side * 7.8, roadHeight(d + 3) + 1.15, .2, .27, .24);
-          put('detail-verges', crown, green, d + 2, side * (8.2 + random() * .6), roadHeight(d + 2) + .3, .7, .5, 1.5, 0xb4b773);
+          const vergeOffset = side * (8.2 + random() * .6);
+          if (!cinematic) put('detail-verges', crown, green, d + 2, vergeOffset, roadHeight(d + 2) + .3, .7, .5, 1.5, 0xb4b773);
         }
       }
     }

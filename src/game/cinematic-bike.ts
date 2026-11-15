@@ -78,7 +78,7 @@ export function createCinematicRaceRig(bike: THREE.Group) {
   return {update(distance:number,speed:number,sprint:boolean,dt=1/60){
     if(dt<=0)return;
     stance+=((sprint?1:0)-stance)*(1-Math.exp(-dt*4));body.rotation.x=-stance*.035;
-    rider.setPhase(-distance*1.2);wheels.forEach(wheel=>{wheel.rotation.z=distance/(.65*bike.scale.x);});
+    rider.setPhase(distance*1.2);wheels.forEach(wheel=>{wheel.rotation.z=-distance/(.65*bike.scale.x);});
     bike.userData.cadence=Math.max(0,Math.min(120,speed*1.2*60/(Math.PI*2)));
   }};
 }

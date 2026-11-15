@@ -6,7 +6,15 @@ export const cinematicRoadBudget = {low:{trees:16,flowers:18,grass:35,terrain:26
 export function roadDetails(quality:Quality) {
   const budget=cinematicRoadBudget[quality], mat=(color:number)=>new THREE.MeshLambertMaterial({color});
   const box=new THREE.BoxGeometry(1,1,1), trunk=new THREE.CylinderGeometry(.7,1,1,quality==='low'?8:12);
-  const crown=new THREE.IcosahedronGeometry(1,quality==='high'?2:1), pebble=new THREE.IcosahedronGeometry(1,1);
+  const crown=new THREE.SphereGeometry(1,quality==='low'?12:20,quality==='low'?10:14), pebble=new THREE.IcosahedronGeometry(1,1);
+  // One connected, asymmetrical foliage mass: no separate elevated side lobes.
+  const foliage=crown.getAttribute('position');
+  for(let i=0;i<foliage.count;i++){
+    const x=foliage.getX(i),y=foliage.getY(i),z=foliage.getZ(i);
+    const r=1+.075*Math.sin(x*5+z*3)+.045*Math.sin(y*7-z*4);
+    foliage.setXYZ(i,x*r*(1+.035*y),y*r,z*r);
+  }
+  crown.computeVertexNormals();
   const pine=new THREE.LatheGeometry([new THREE.Vector2(0,0),new THREE.Vector2(.65,.04),new THREE.Vector2(.25,.27),new THREE.Vector2(.52,.23),new THREE.Vector2(.17,.5),new THREE.Vector2(.4,.43),new THREE.Vector2(.1,.75),new THREE.Vector2(.26,.68),new THREE.Vector2(0,1.13)],quality==='low'?10:16);
   const green=mat(0xffffff), bark=mat(0x655542), plaster=mat(0xffffff), timber=mat(0x675345), roof=mat(0x875e50), stone=mat(0x8e9899), cream=mat(0xdcd6bb), glass=mat(0x45616a), dark=mat(0x34464c);
   const gableShape=new THREE.Shape();gableShape.moveTo(-.5,0);gableShape.lineTo(0,.6);gableShape.lineTo(.5,0);gableShape.closePath();
@@ -26,8 +34,7 @@ export function roadDetails(quality:Quality) {
       const palette=[0x3f6450,0x6d8750,0x507563,0x88925a];
       if(conifer)put('conifers',pine,green,d,offset,y+h*.16,h*.31,h,h*.31,palette[i%4]);
       else {
-        const clusters=quality==='low'?3:5;
-        for(let j=0;j<clusters;j++){const spread=(j-(clusters-1)/2)/clusters;put('broadleaf-canopy',crown,green,d+Math.sin(j*2.4)*h*.12,offset+spread*h*.5,y+h*(.65+Math.cos(j*1.7)*.12),h*.23,h*.24,h*.25,palette[(i+j)%4]);}
+        put('broadleaf-canopy',crown,green,d,offset,y+h*.69,h*.37,h*.38,h*.34,palette[i%4]);
         for(const branch of [-1,1])put('tree-branches',trunk,bark,d,offset+branch*h*.11,y+h*.46,.18,h*.38,.18,0xffffff,0,branch*.55);
       }
       if(i%2===0){const bd=d+3,bo=side*(13+random()*4);put('bushes',crown,green,bd,bo,terrain(bo,bd)+.7,1.3,1.2,1.8,0x758c54);}
@@ -77,8 +84,8 @@ export function roadDetails(quality:Quality) {
         put('bridge-arches',arch,stone,1100,side*7.6,height(1100)-.1,1,1,1);
         for(let i=0;i<18;i++){const d=1074+i*3;put('bridge-stone',box,stone,d,side*7.6,height(d)+.5,.8,1.15,2.95);put('bridge-cap',box,cream,d,side*7.6,height(d)+1.13,1.05,.20,3.02);put('bridge-mortar',box,dark,d+1.48,side*7.14,height(d)+.45,.015,1.05,.035);}
         for(let i=0;i<12;i++){const d=1088+i*2.2,offset=side*(13+random()*20);put('riverbank-reeds',grassGeometry,grassMaterial,d,offset,height(d)-1.5,.5,1.5,.5,0x819465);}
-        // A few low river stones only; the rest of the route stays green.
-        for(let i=0;i<5;i++){const d=1082+i*7,offset=side*(18+random()*20);put('river-stones',pebble,stone,d,offset,height(d)-1.7,1.1,.45,.8);}
+        // Preserve downstream artwork placement while removing the old river stones.
+        for(let i=0;i<5;i++)random();
       }
     }
   }};

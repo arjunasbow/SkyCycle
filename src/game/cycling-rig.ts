@@ -33,7 +33,7 @@ export function createCyclingRig(bike: THREE.Group) {
       knee.set(side * .23, (start.y + foot.y) / 2 - dz / length * bend, (start.z + foot.z) / 2 + dy / length * bend);
       link(upper[i], start, knee); link(lower[i], knee, foot);
     }
-    wheels.forEach(wheel => { wheel.rotation.z = distance / (.65 * bike.scale.x); });
+    wheels.forEach(wheel => { wheel.rotation.z = -distance / (.65 * bike.scale.x); });
     // Lean stays small enough to keep the helmet and hands close to their original pose.
     bike.userData.cadence = clamp(speed * 1.2 * 60 / (Math.PI * 2), 0, 120);
   } };
