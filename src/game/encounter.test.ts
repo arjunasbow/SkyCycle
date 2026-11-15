@@ -5,6 +5,7 @@ import { MANDALA_DISTANCE, mandalaGapAt, LOTUS_DISTANCE, lotusGapAt, lotusDistan
 import { JOURNEY_LENGTH, initialFlow, routeX, routeY } from './kaleidoscope';
 import { cyclingCadence } from './tunnel-rider';
 import type { BikeState } from '../bike/types';
+import { andromedaTexture } from './andromeda';
 it('opens the tunnel about fifteen seconds before the mandala and restores it after passage on every lap', () => {
   for (const lap of [0, 1, 10]) {
     const centre = MANDALA_DISTANCE + lap * JOURNEY_LENGTH;
@@ -78,4 +79,37 @@ it('opens a separate lotus approach, retains its centre until passed, and wraps 
   world.updateTunnel!(140, initialFlow(), true);
   for (const petal of petals) expect(petal.position.y).toBeGreaterThan(20);
   world.dispose();
+});
+
+it('parts the botanical seed head into a clear central passage, even without flow charge', () => {
+  const world = createWorld('low', 'kaleidoscope'), flow = initialFlow();
+  const update = (ahead: number) => { const d = LOTUS_DISTANCE - ahead; world.bike.position.set(routeX(d), routeY(d) - 3.2, 110 - d); world.updateTunnel!(130, flow, true); };
+  update(300);
+  const heart = world.scene.getObjectByName('lotus-botanical-heart')!;
+  expect(heart.userData.aperture).toBeLessThan(1);
+  expect(world.scene.getObjectByName('lotus-stamens')).toBeDefined();
+  expect(world.scene.getObjectByName('lotus-inner-petal-crown')).toBeDefined();
+  update(40); expect(heart.userData.aperture).toBeCloseTo(19);
+  const pod = world.scene.getObjectByName('lotus-seed-pod') as THREE.Mesh, vertices = pod.geometry.getAttribute('position');
+  for (let i = 0; i < vertices.count; i++) expect(Math.hypot(vertices.getX(i), vertices.getY(i))).toBeGreaterThan(18.99);
+  const seeds = world.scene.getObjectByName('lotus-seed-pits') as THREE.InstancedMesh, matrix = new THREE.Matrix4(), position = new THREE.Vector3();
+  for (let i = 0; i < seeds.count; i++) { seeds.getMatrixAt(i, matrix); position.setFromMatrixPosition(matrix); expect(Math.hypot(position.x, position.y)).toBeGreaterThan(19.6); }
+  update(-20); expect(heart.userData.aperture).toBeCloseTo(19);
+  world.dispose();
+});
+it('generates a bounded soft stellar disk with a warm core, transparent edges and dusty variation', () => {
+  for (const quality of ['low', 'medium', 'high'] as const) {
+    const texture = andromedaTexture(quality), { width, height } = texture.image, data = texture.image.data!;
+    expect(width).toBe(quality === 'low' ? 128 : quality === 'medium' ? 256 : 384); expect(height).toBe(width);
+    const centre = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
+    expect(data[centre]).toBeGreaterThan(data[centre + 2]); expect(data[centre + 3]).toBeGreaterThan(200); expect(data[3]).toBe(0);
+    const sample = (x: number, y: number) => { const i = ((Math.floor(y * .5 * height + height / 2)) * width + Math.floor(x * .5 * width + width / 2)) * 4; return data[i] + data[i + 1] + data[i + 2]; };
+    expect(sample(.35, 0)).not.toBe(sample(0, .35)); texture.dispose();
+  }
+});
+it('releases the generated galaxy texture when switching worlds', () => {
+  const world = createWorld('low', 'kaleidoscope');
+  const disk = world.scene.getObjectByName('andromeda-dusty-disk') as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  expect(disk.material.map).toBeInstanceOf(THREE.DataTexture);
+  let disposed = 0; disk.material.map!.addEventListener('dispose', () => disposed++); world.dispose(); expect(disposed).toBe(1);
 });

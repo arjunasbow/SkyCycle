@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Quality } from './world';
+import { andromedaTexture } from './andromeda';
 import { JOURNEY_LENGTH, routeX, routeY } from './kaleidoscope';
 export const MANDALA_DISTANCE = 1380;
 export const mandalaDistanceAt = (distance: number) => Math.floor((distance + 250) / JOURNEY_LENGTH) * JOURNEY_LENGTH + MANDALA_DISTANCE;
@@ -52,12 +53,14 @@ export function addMandalaEncounter(scene: THREE.Scene, quality: Quality) {
   let seed = 891; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   for (let i = 0; i < count; i++) {
     const r = Math.pow(random(), .7) * 78, a = r * .045 + (i % 4) * Math.PI / 2 + (random() - .5) * .36;
-    positions.set([Math.cos(a) * r, Math.sin(a) * r * .66, (random() - .5) * (3 + r * .045)], i * 3);
-    tint.setHSL(.1 + r / 78 * .57, .4, .7 - r / 78 * .36); coloursArray.set([tint.r, tint.g, tint.b], i * 3);
+    positions.set([Math.cos(a) * r, Math.sin(a) * r * .36, (random() - .5) * (3 + r * .045)], i * 3);
+    tint.setRGB(.62 - r / 78 * .15, .56 - r / 78 * .04, .43 + r / 78 * .22); coloursArray.set([tint.r, tint.g, tint.b], i * 3);
   }
   const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); geometry.setAttribute('color', new THREE.BufferAttribute(coloursArray, 3));
   const stars = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 1.8, vertexColors: true, transparent: true, opacity: .8, depthWrite: false })); galaxy.add(stars);
-  const core = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), new THREE.MeshBasicMaterial({ color: 0xc7b595 })); core.scale.set(5, 3.3, 1); galaxy.add(core);
+  const texture = andromedaTexture(quality);
+  const disk = new THREE.Mesh(new THREE.PlaneGeometry(190, 76), new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  disk.name = 'andromeda-dusty-disk'; disk.position.z = -.6; galaxy.add(disk);
   return { update(distance: number, time: number, reduced: boolean) {
     const encounter = mandalaDistanceAt(distance);
     mandala.position.set(routeX(encounter), routeY(encounter), 110 - encounter);
@@ -66,6 +69,6 @@ export function addMandalaEncounter(scene: THREE.Scene, quality: Quality) {
     mandala.rotation.x = Math.atan2(routeY(encounter + 1) - routeY(encounter), 1);
     layers.forEach((layer, i) => { layer.rotation.z = i * .13 + (reduced ? 0 : time * (i % 2 ? -.018 : .014)); });
     galaxy.position.set(routeX(encounter) + 145, routeY(encounter) + 48, 110 - encounter - 80);
-    galaxy.rotation.set(.15, -.2, reduced ? .3 : .3 + time * .006);
-  } };
+    galaxy.rotation.set(.12, -.15, reduced ? .55 : .55 + Math.sin(time * .008) * .025);
+  }, dispose() { texture.dispose(); } };
 }

@@ -184,6 +184,6 @@ export function createWorld(quality: Quality, environment: Environment = 'valley
       if (!space) propeller.rotation.z += dt * (thrust * 38 + 1);
       exhausts.forEach((exhaust, i) => { exhaust.scale.z = .18 + Math.min(2, Math.max(0, thrust)) * (.85 + .06 * Math.sin(time * 32 + i * 2)); });
       if (!road) wheels.forEach(w => { w.rotation.z += dt * thrust * 6; }); targets.forEach((t, i) => { targetObjects[i].visible = !t.hit; if (t.kind === 'balloon') targetObjects[i].rotation.y = Math.sin(time * .5) * .1; }); animateScenery(time); enhanced?.update(time, bike.position); space?.update(time); },
-    dispose() { const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
+    dispose() { kaleidoscope?.dispose(); const geometries = new Set<THREE.BufferGeometry>(), mats = new Set<THREE.Material>(); scene.traverse(o => { if (o instanceof THREE.Mesh || o instanceof THREE.Points) { geometries.add(o.geometry); (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m)); if (o instanceof THREE.InstancedMesh) o.dispose(); } }); geometries.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); scene.clear(); }
   };
 }
