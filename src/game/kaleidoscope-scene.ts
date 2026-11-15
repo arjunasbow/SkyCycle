@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Quality } from './world';
 import { addParadiseBird } from './paradise-bird';
+import { addLotusHeart } from './lotus-heart';
 import { addMandalaEncounter, encounterGapAt, lotusDistanceAt } from './mandala-encounter';
 import { chamberAt, chapterAt, CHAPTER_LENGTH, corridorRadius, distanceAt, JOURNEY_LENGTH, lotusOpening, routeX, routeY, type FlowState } from './kaleidoscope';
 
@@ -65,7 +66,7 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
   const veinGeometry = new THREE.TubeGeometry(veinCurve, 24, .009, 4, false);
   const petals: THREE.Group[] = [];
   const petalMaterial = new THREE.MeshBasicMaterial({ color: 0xc181cb });
-  const petalCore = new THREE.MeshLambertMaterial({ color: 0x694389, side: THREE.DoubleSide });
+  const petalCore = new THREE.MeshLambertMaterial({ color: 0xcf7ea2, side: THREE.DoubleSide });
   for (let layer = 0; layer < 2; layer++) {
     const count = layer === 0 ? 16 : 12;
     for (let i = 0; i < count; i++) {
@@ -75,7 +76,7 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
       surface.scale.set(layer ? 6 : 7.5, layer ? 21 : 27, layer ? 2.5 : 3); vein.scale.copy(surface.scale); hinge.add(surface, vein);
     }
   }
-  const heart = new THREE.Mesh(new THREE.TorusGeometry(19, .22, 5, 64), new THREE.MeshBasicMaterial({ color: 0xffddb0 })); lotus.add(heart);
+  const lotusHeart = addLotusHeart(lotus, quality, petalGeometry);
   const encounterScenery = addMandalaEncounter(scene, quality);
   const { bird, wings, tail } = addParadiseBird(scene, quality);
   const beacons = new THREE.InstancedMesh(new THREE.SphereGeometry(.18, 8, 6), new THREE.MeshBasicMaterial({ color: 0x4b9b9c }), 48);
@@ -149,11 +150,12 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
     const lotusDistance = lotusDistanceAt(distance);
     lotus.position.set(routeX(lotusDistance), routeY(lotusDistance), 110 - lotusDistance);
     const opening = lotusOpening(lotusDistance - distance, flow.charge);
+    lotusHeart.update(lotusDistance - distance, opening);
     for (let i = 0; i < petals.length; i++) {
       const p = petals[i]; p.position.y = 5 + opening * (p.userData.layer ? 19 : 22); p.rotation.x = -1.35 + opening * (p.userData.layer ? 1.6 : 1.8);
     }
     lotus.rotation.z = reduced ? 0 : Math.sin(time * .06) * .12;
-    petalMaterial.color.setHSL(.82 - opening * .08, .7, .53 + opening * .15);
+    petalMaterial.color.setHSL(.93 - opening * .025, .5, .6 + opening * .08);
     encounterScenery.update(distance, time, reduced);
     for (let i = 0; i < beacons.count; i++) {
       const d = Math.floor((distance - 30) / 12) * 12 + i * 12;
@@ -169,5 +171,5 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
     wings[1].rotation.z = -wings[0].rotation.z;
     tail.rotation.x = reduced ? 0 : Math.sin(time * .85 - .8) * .07;
     for (const batch of batches) { batch.instanceMatrix.needsUpdate = true; if (batch.instanceColor) batch.instanceColor.needsUpdate = true; }
-  } };
+  }, dispose() { encounterScenery.dispose(); } };
 }
