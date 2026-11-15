@@ -6,6 +6,8 @@ import type { BikeDataAdapter, BikeState } from '../bike/types';
 import { assistedSteering, clamp, collectTargets, courseEffortHint, DEFAULT_RIDE_SECONDS, DEFAULT_CALIBRATION, FlightInputAdapter, initialFlight, stepFlight, timedRideFinished, wrapCourse, type Calibration, type FlightControls } from './flight';
 import { createWorld, terrainHeight, parseValleyStyle, type ValleyStyle, type Environment, type Quality } from './world';
 import './game.css';
+import { createGraphics } from './graphics';
+import { parseGraphicsMode, type GraphicsMode } from './graphics-settings';
 import { enterFlightFullscreen } from './display';
 import { roadCameraPose } from './road-camera';
 import { initialRace, stepRace, racePose, racePosition, raceGuidance, ROAD_LENGTH, type RaceDifficulty } from './race';
@@ -38,6 +40,12 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
   const [valleyStyle, setValleyStyle] = useState<ValleyStyle>(() => { try { return parseValleyStyle(localStorage.getItem('skycycle.valleyStyle')); } catch { return 'enhanced'; } });
   const [renderInfo, setRenderInfo] = useState('');
   const [quality, setQuality] = useState<Quality>('high');
+  const [graphicsMode, setGraphicsMode] = useState<GraphicsMode>(() => { try { return parseGraphicsMode(localStorage.getItem('skycycle.graphics')); } catch { return 'standard'; } });
+  const [graphicsReady, setGraphicsReady] = useState(false), [graphicsLabel, setGraphicsLabel] = useState('Starting graphics');
+  const [graphicsAttempt, setGraphicsAttempt] = useState(0);
+  const [graphicsNotice, setGraphicsNotice] = useState(''), [gpuFailed, setGpuFailed] = useState(false);
+  const changeGraphics = (next: GraphicsMode) => { changeStatus('ready'); setGpuFailed(false); setGraphicsMode(next); setGraphicsAttempt(value => value + 1); try { localStorage.setItem('skycycle.graphics', next); } catch { /* Optional preference. */ } };
+
   const [environment, setEnvironment] = useState<Environment>(() => { try { const saved = localStorage.getItem('skycycle.environment'); return saved === 'space' || saved === 'road' || saved === 'kaleidoscope' ? saved : 'valley'; } catch { return 'valley'; } });
   const [dynamicCamera, setDynamicCamera] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const dynamicCameraRef = useRef(dynamicCamera);
@@ -133,121 +141,151 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
   useEffect(() => {
     if (!host.current) return;
     const container = host.current;
-    let renderer: THREE.WebGLRenderer;
-    try { renderer = new THREE.WebGLRenderer({ antialias: quality === 'high', powerPreference: 'high-performance', alpha: false }); }
-    catch { setError('3D rendering is unavailable in this browser. Try enabling WebGL or another supported browser. Bike diagnostics remain available.'); return; }
-    setError('');
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'low' ? 1 : quality === 'medium' ? 1.25 : 1.5));
-    renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
-    renderer.domElement.setAttribute('aria-label', isTunnel ? 'Luminous winding Kaleidoscope bicycle tunnel' : environment === 'road' ? 'Road cycling race with five simulated riders' : environment === 'space' ? 'Flying bicycle among planets and spiral galaxies' : 'Three-dimensional flying bicycle in a mountain valley');
-    container.appendChild(renderer.domElement);
-    const world = createWorld(quality, environment, valleyStyle), camera = new THREE.PerspectiveCamera(60, 1, .3, 1700);
-    let race = initialRace(), roadLap = 0, flow = initialFlow();
-    let passSequence = 0, passExpiry = 0;
-    const passSides = race.riders.map(rider => Math.sign(rider.distance - race.distance));
-    let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0, hitSequence = 0;
-    const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3();
-    const resetCamera = () => {
-      if (isRoad) {
-        const view = roadCameraPose(race, dynamicCameraRef.current);
-        camera.position.set(view.x, view.y, view.z); look.set(view.lookX, view.lookY, view.lookZ); camera.fov = view.fov; camera.updateProjectionMatrix();
-      } else { camera.position.set(flight.x, flight.y + 8, flight.z + 18); look.set(flight.x, flight.y + 3, flight.z - 25); }
-    };
-    if (isRoad) racePose(race, flight);
-    resetCamera();
-    engine.current = { reset() { flight = initialFlight(); flow = initialFlow(); race = initialRace(); roadLap = 0; setPassNotice(undefined); passExpiry = 0; race.riders.forEach((rider, i) => { passSides[i] = Math.sign(rider.distance - race.distance); }); if (isRoad) racePose(race, flight); score = 0; setHitFeedback(undefined); setStats(previous => ({ ...previous, score: 0, elapsed: 0, flow: 0, multiplier: 1, inside: true, position: isRoad ? racePosition(race) : undefined, distance: 0 })); world.resetTargets(); resetCamera(); accumulator = 0; } };
-    const resize = () => { const { width, height } = container.getBoundingClientRect(); renderer.setSize(width, height); camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); };
-    const observer = new ResizeObserver(resize); observer.observe(container); resize();
-    // Warm every shared scenery material before flight, including distant batches.
-    if (isRoad || isTunnel || environment === 'valley' && valleyStyle === 'enhanced') renderer.compile(world.scene, camera);
-    const contextLost = (event: Event) => { event.preventDefault(); changeStatus('paused'); setError('The graphics context was lost. Reload the page or choose another quality setting to restart graphics.'); };
-    renderer.domElement.addEventListener('webglcontextlost', contextLost);
-    const animate = (timestamp: number) => {
-      frame = requestAnimationFrame(animate);
-      const dt = Math.min(.1, Math.max(0, (timestamp - lastTime) / 1000)); lastTime = timestamp;
-      if (document.hidden) return;
-      if (statusRef.current === 'running') {
-        const k = keys.current, touch = controls.current;
-        const input = { steer: clamp(touch.steer + tiltValue.current.steer + (k.has('arrowright') || k.has('d') ? 1 : 0) - (k.has('arrowleft') || k.has('a') ? 1 : 0), -1, 1), pitch: clamp(touch.pitch + tiltValue.current.pitch + (k.has('arrowup') || k.has('w') ? 1 : 0) - (k.has('arrowdown') || k.has('s') ? 1 : 0), -1, 1) };
-        const effort = source.current?.effort(Date.now(), calibrationRef.current) ?? 0;
-        accumulator += dt;
-        while (accumulator >= 1 / 60) {
-          if (isRoad) {
-            stepRace(race, effort, difficultyRef.current, 1 / 60, modeRef.current === 'arcade'); racePose(race, flight);
-            race.riders.forEach((rider, i) => {
-              const gap = rider.distance - race.distance;
-              // Require a clear gap on either side before announcing another pass.
-              const side = gap > 3 ? 1 : gap < -2 ? -1 : passSides[i];
-              if (side !== passSides[i]) {
-                const previousSide = passSides[i]; passSides[i] = side;
-                if (previousSide && race.elapsed > 5 && race.elapsed > passExpiry) {
-                  const text = side > 0 ? `${rider.name} passed you` : `Passed ${rider.name}`;
-                  setPassNotice({ sequence: ++passSequence, text: `${text} / P${racePosition(race)}` }); passExpiry = race.elapsed + 2.5;
-                }
-              }
-            });
-            if (passExpiry && race.elapsed > passExpiry) { setPassNotice(undefined); passExpiry = 0; }
-          } else if (isTunnel) {
-            stepTunnel(flight, effort, 1 / 60); stepFlow(flow, flight, 1 / 60, true, effort > 0); score = flow.score;
-          } else {
-          const prev = { ...flight };
-          stepFlight(flight, { ...input, steer: assistedRef.current ? assistedSteering(flight, world.targets) : input.steer }, effort, 1 / 60, environment === 'space' ? 4 : Math.max(4, terrainHeight(flight.x, flight.z) + 4));
-          const gained = collectTargets(prev, flight, world.targets, hit => {
-            world.celebrate(hit.index); audio.current.play(hit.target.kind);
-            setHitFeedback({ sequence: ++hitSequence, points: hit.points, kind: hit.target.kind });
-          });
-          score += gained; if (gained) { const currentScore = score; setStats(previous => ({ ...previous, score: currentScore, elapsed: flight.elapsed })); }
-          }
-          accumulator -= 1 / 60;
-          if (timedRideFinished(modeRef.current, flight.elapsed)) { race.elapsed = DEFAULT_RIDE_SECONDS; flight.elapsed = DEFAULT_RIDE_SECONDS; const finalScore = score; setStats(previous => ({ ...previous, score: finalScore, elapsed: DEFAULT_RIDE_SECONDS, position: isRoad ? racePosition(race) : undefined, distance: race.distance })); changeStatus('finished'); break; }
-          if (isRoad) {
-            const lap = Math.floor(race.distance / ROAD_LENGTH);
-            if (lap !== roadLap) { camera.position.z += (lap - roadLap) * ROAD_LENGTH; look.z += (lap - roadLap) * ROAD_LENGTH; roadLap = lap; }
-          }
-          if (!isRoad && !isTunnel && wrapCourse(flight, world.targets)) { world.resetTargets(); resetCamera(); }
+    let cancelled = false, cleanup: (() => void) | undefined;
+    setGraphicsReady(false); engine.current = null; setError('');
+    const start = async () => {
+      const graphics = await createGraphics(graphicsMode === 'cinematic' && isTunnel && !gpuFailed ? 'cinematic' : 'standard', quality);
+      const renderer = graphics.renderer;
+      if (cancelled) { graphics.dispose(); return; }
+      setGraphicsLabel(graphics.label);
+      if (!gpuFailed) setGraphicsNotice(graphics.notice || (graphicsMode === 'cinematic' && !isTunnel ? 'Cinematic is available in Kaleidoscope. This world uses Standard graphics.' : ''));
+      renderer.domElement.setAttribute('aria-label', isTunnel ? 'Luminous winding Kaleidoscope bicycle tunnel' : environment === 'road' ? 'Road cycling race with five simulated riders' : environment === 'space' ? 'Flying bicycle among planets and spiral galaxies' : 'Three-dimensional flying bicycle in a mountain valley');
+
+      const world = createWorld(quality, environment, valleyStyle), camera = new THREE.PerspectiveCamera(60, 1, .3, 1700);
+      let race = initialRace(), roadLap = 0, flow = initialFlow();
+      let passSequence = 0, passExpiry = 0;
+      const passSides = race.riders.map(rider => Math.sign(rider.distance - race.distance));
+      let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0, hitSequence = 0;
+      const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3();
+      const resetCamera = () => {
+        if (isRoad) {
+          const view = roadCameraPose(race, dynamicCameraRef.current);
+          camera.position.set(view.x, view.y, view.z); look.set(view.lookX, view.lookY, view.lookZ); camera.fov = view.fov; camera.updateProjectionMatrix();
+        } else { camera.position.set(flight.x, flight.y + 8, flight.z + 18); look.set(flight.x, flight.y + 3, flight.z - 25); }
+      };
+      if (isRoad) racePose(race, flight);
+      resetCamera();
+      const activeEngine = { reset() { flight = initialFlight(); flow = initialFlow(); race = initialRace(); roadLap = 0; setPassNotice(undefined); passExpiry = 0; race.riders.forEach((rider, i) => { passSides[i] = Math.sign(rider.distance - race.distance); }); if (isRoad) racePose(race, flight); score = 0; setHitFeedback(undefined); setStats(previous => ({ ...previous, score: 0, elapsed: 0, flow: 0, multiplier: 1, inside: true, position: isRoad ? racePosition(race) : undefined, distance: 0 })); world.resetTargets(); resetCamera(); accumulator = 0; } };
+      const resize = () => { const { width, height } = container.getBoundingClientRect(); renderer.setSize(Math.max(1, width), Math.max(1, height)); camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); };
+      resize();
+      try { await graphics.prepare(world.scene, camera); }
+      catch (error) {
+        world.dispose(); graphics.dispose();
+        if (cancelled) return;
+        if (graphics.label.startsWith('WebGPU')) {
+          setGraphicsNotice('Cinematic could not prepare this scene. Standard graphics is active. Try Cinematic again in Flight settings.'); setGpuFailed(true); return;
         }
-      } else accumulator = 0;
-      world.bike.position.set(flight.x, flight.y, flight.z); world.bike.rotation.set(flight.pitch, -flight.heading, -flight.bank, 'YXZ');
-      world.updateRace?.(race, modeRef.current === 'arcade', statusRef.current === 'running' ? dt : 0);
-      world.updateTunnel?.(flight.elapsed, flow, reducedEffectsRef.current);
-      world.update(flight.elapsed, statusRef.current === 'running' ? flight.thrust : .08, isTunnel && statusRef.current !== 'running' ? 0 : dt);
-      let cameraRoll = 0;
-      if (isRoad) {
-        const view = roadCameraPose(race, dynamicCameraRef.current);
-        targetCamera.set(view.x, view.y, view.z); targetLook.set(view.lookX, view.lookY, view.lookZ);
-        const fov = camera.fov + (view.fov - camera.fov) * (1 - Math.exp(-dt * 2));
-        if (Math.abs(fov - camera.fov) > .001) { camera.fov = fov; camera.updateProjectionMatrix(); }
-        cameraRoll = view.roll;
-      } else if (isTunnel) {
-        targetCamera.set(flight.x - Math.sin(flight.heading) * 12, flight.y + 6, flight.z + 16);
-        targetLook.set(flight.x + Math.sin(flight.heading) * 45, flight.y + 3, flight.z - 65);
-      } else {
-      targetCamera.set(flight.x - Math.sin(flight.heading) * 18, flight.y + 8, flight.z + Math.cos(flight.heading) * 18);
-      targetLook.set(flight.x + Math.sin(flight.heading) * 28, flight.y + 3 + flight.pitch * 14, flight.z - Math.cos(flight.heading) * 28);
+        throw error;
       }
-      camera.position.lerp(targetCamera, 1 - Math.exp(-dt * 4)); look.lerp(targetLook, 1 - Math.exp(-dt * 4)); camera.lookAt(look); if (isRoad) camera.rotateZ(cameraRoll);
-      renderer.render(world.scene, camera); frameCount++;
-      if (timestamp - statTime > 500) {
-        setRenderInfo(`${renderer.info.render.calls} draw calls | ${renderer.info.render.triangles.toLocaleString()} triangles | ${renderer.info.memory.geometries} geometries | ${renderer.info.memory.textures} textures`);
-        const next = world.targets.find(t => !t.bonus && !t.hit && t.z < flight.z);
-        const guidance = raceGuidance(race, modeRef.current === 'arcade');
-        if (isRoad) setStats({ speed: race.speed * 3.6, altitude: 0, score: 0, elapsed: race.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: guidance.effort, target: guidance.target, direction: '>', position: racePosition(race), distance: race.distance, rivals: race.riders.map(r => ({ name: r.name, gap: r.distance - race.distance })) });
-        else if (isTunnel) setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: tunnelHint(flight), target: `${CHAPTERS[chapterAt(distanceAt(flight.z))]} | ${flow.inside ? 'Follow the light' : 'Return to the glowing corridor'}`, direction: tunnelHint(flight) > 1.025 ? '\u2191' : tunnelHint(flight) < .975 ? '\u2193' : '\u2192', flow: flow.charge, multiplier: flow.multiplier, inside: flow.inside });
-        else setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: courseEffortHint(flight, next), target: next ? `${next.kind === 'ring' ? 'Ring' : 'Balloon'} · ${Math.round(Math.hypot(next.x - flight.x, next.y - flight.y, next.z - flight.z))} m · ${Math.round(next.y)} m altitude` : environment === 'space' ? 'Follow the starlight' : 'Follow the valley', direction: next ? next.x - flight.x > 15 ? '↗' : next.x - flight.x < -15 ? '↖' : next.y - flight.y > 8 ? '⇧' : next.y - flight.y < -8 ? '⇩' : '↑' : '↑' });
-        frameCount = 0; statTime = timestamp;
-      }
+      if (cancelled) { world.dispose(); graphics.dispose(); return; }
+      container.appendChild(renderer.domElement); engine.current = activeEngine; setGraphicsReady(true);
+      lastTime = performance.now();
+      const observer = new ResizeObserver(resize); observer.observe(container);
+      let renderFailed = false;
+      graphics.onFailure?.(() => {
+        if (cancelled) return;
+        renderFailed = true; changeStatus('ready'); setGraphicsReady(false);
+        setGraphicsNotice('WebGPU was interrupted. Standard graphics is active. You can retry Cinematic in Flight settings.'); setGpuFailed(true);
+      });
+      const contextLost = (event: Event) => { event.preventDefault(); changeStatus('paused'); setError('The graphics context was lost. Reload the page or choose another quality setting to restart graphics.'); };
+      renderer.domElement.addEventListener('webglcontextlost', contextLost);
+      const animate = (timestamp: number) => {
+        frame = requestAnimationFrame(animate);
+        const dt = Math.min(.1, Math.max(0, (timestamp - lastTime) / 1000)); lastTime = timestamp;
+        if (document.hidden) return;
+        if (statusRef.current === 'running') {
+          const k = keys.current, touch = controls.current;
+          const input = { steer: clamp(touch.steer + tiltValue.current.steer + (k.has('arrowright') || k.has('d') ? 1 : 0) - (k.has('arrowleft') || k.has('a') ? 1 : 0), -1, 1), pitch: clamp(touch.pitch + tiltValue.current.pitch + (k.has('arrowup') || k.has('w') ? 1 : 0) - (k.has('arrowdown') || k.has('s') ? 1 : 0), -1, 1) };
+          const effort = source.current?.effort(Date.now(), calibrationRef.current) ?? 0;
+          accumulator += dt;
+          while (accumulator >= 1 / 60) {
+            if (isRoad) {
+              stepRace(race, effort, difficultyRef.current, 1 / 60, modeRef.current === 'arcade'); racePose(race, flight);
+              race.riders.forEach((rider, i) => {
+                const gap = rider.distance - race.distance;
+                // Require a clear gap on either side before announcing another pass.
+                const side = gap > 3 ? 1 : gap < -2 ? -1 : passSides[i];
+                if (side !== passSides[i]) {
+                  const previousSide = passSides[i]; passSides[i] = side;
+                  if (previousSide && race.elapsed > 5 && race.elapsed > passExpiry) {
+                    const text = side > 0 ? `${rider.name} passed you` : `Passed ${rider.name}`;
+                    setPassNotice({ sequence: ++passSequence, text: `${text} / P${racePosition(race)}` }); passExpiry = race.elapsed + 2.5;
+                  }
+                }
+              });
+              if (passExpiry && race.elapsed > passExpiry) { setPassNotice(undefined); passExpiry = 0; }
+            } else if (isTunnel) {
+              stepTunnel(flight, effort, 1 / 60); stepFlow(flow, flight, 1 / 60, true, effort > 0); score = flow.score;
+            } else {
+            const prev = { ...flight };
+            stepFlight(flight, { ...input, steer: assistedRef.current ? assistedSteering(flight, world.targets) : input.steer }, effort, 1 / 60, environment === 'space' ? 4 : Math.max(4, terrainHeight(flight.x, flight.z) + 4));
+            const gained = collectTargets(prev, flight, world.targets, hit => {
+              world.celebrate(hit.index); audio.current.play(hit.target.kind);
+              setHitFeedback({ sequence: ++hitSequence, points: hit.points, kind: hit.target.kind });
+            });
+            score += gained; if (gained) { const currentScore = score; setStats(previous => ({ ...previous, score: currentScore, elapsed: flight.elapsed })); }
+            }
+            accumulator -= 1 / 60;
+            if (timedRideFinished(modeRef.current, flight.elapsed)) { race.elapsed = DEFAULT_RIDE_SECONDS; flight.elapsed = DEFAULT_RIDE_SECONDS; const finalScore = score; setStats(previous => ({ ...previous, score: finalScore, elapsed: DEFAULT_RIDE_SECONDS, position: isRoad ? racePosition(race) : undefined, distance: race.distance })); changeStatus('finished'); break; }
+            if (isRoad) {
+              const lap = Math.floor(race.distance / ROAD_LENGTH);
+              if (lap !== roadLap) { camera.position.z += (lap - roadLap) * ROAD_LENGTH; look.z += (lap - roadLap) * ROAD_LENGTH; roadLap = lap; }
+            }
+            if (!isRoad && !isTunnel && wrapCourse(flight, world.targets)) { world.resetTargets(); resetCamera(); }
+          }
+        } else accumulator = 0;
+        world.bike.position.set(flight.x, flight.y, flight.z); world.bike.rotation.set(flight.pitch, -flight.heading, -flight.bank, 'YXZ');
+        world.updateRace?.(race, modeRef.current === 'arcade', statusRef.current === 'running' ? dt : 0);
+        world.updateTunnel?.(flight.elapsed, flow, reducedEffectsRef.current);
+        world.update(flight.elapsed, statusRef.current === 'running' ? flight.thrust : .08, isTunnel && statusRef.current !== 'running' ? 0 : dt);
+        let cameraRoll = 0;
+        if (isRoad) {
+          const view = roadCameraPose(race, dynamicCameraRef.current);
+          targetCamera.set(view.x, view.y, view.z); targetLook.set(view.lookX, view.lookY, view.lookZ);
+          const fov = camera.fov + (view.fov - camera.fov) * (1 - Math.exp(-dt * 2));
+          if (Math.abs(fov - camera.fov) > .001) { camera.fov = fov; camera.updateProjectionMatrix(); }
+          cameraRoll = view.roll;
+        } else if (isTunnel) {
+          targetCamera.set(flight.x - Math.sin(flight.heading) * 12, flight.y + 6, flight.z + 16);
+          targetLook.set(flight.x + Math.sin(flight.heading) * 45, flight.y + 3, flight.z - 65);
+        } else {
+        targetCamera.set(flight.x - Math.sin(flight.heading) * 18, flight.y + 8, flight.z + Math.cos(flight.heading) * 18);
+        targetLook.set(flight.x + Math.sin(flight.heading) * 28, flight.y + 3 + flight.pitch * 14, flight.z - Math.cos(flight.heading) * 28);
+        }
+        camera.position.lerp(targetCamera, 1 - Math.exp(-dt * 4)); look.lerp(targetLook, 1 - Math.exp(-dt * 4)); camera.lookAt(look); if (isRoad) camera.rotateZ(cameraRoll);
+        if (renderFailed) return;
+        try { graphics.render(world.scene, camera, flight.elapsed, reducedEffectsRef.current, dt); }
+        catch {
+          renderFailed = true; changeStatus('ready');
+          if (graphics.label.startsWith('WebGPU')) { setGraphicsNotice('Cinematic graphics stopped. Standard graphics is active; your bike connection is unchanged.'); setGpuFailed(true); }
+          else setError('Graphics stopped. Choose another quality setting to restart.');
+          return;
+        }
+        frameCount++;
+        if (timestamp - statTime > 500) {
+          setRenderInfo(`${'drawCalls' in renderer.info.render ? renderer.info.render.drawCalls : renderer.info.render.calls} draw calls | ${renderer.info.render.triangles.toLocaleString()} triangles | ${renderer.info.memory.geometries} geometries | ${renderer.info.memory.textures} textures`);
+          const next = world.targets.find(t => !t.bonus && !t.hit && t.z < flight.z);
+          const guidance = raceGuidance(race, modeRef.current === 'arcade');
+          if (isRoad) setStats({ speed: race.speed * 3.6, altitude: 0, score: 0, elapsed: race.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: guidance.effort, target: guidance.target, direction: '>', position: racePosition(race), distance: race.distance, rivals: race.riders.map(r => ({ name: r.name, gap: r.distance - race.distance })) });
+          else if (isTunnel) setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: tunnelHint(flight), target: `${CHAPTERS[chapterAt(distanceAt(flight.z))]} | ${flow.inside ? 'Follow the light' : 'Return to the glowing corridor'}`, direction: tunnelHint(flight) > 1.025 ? '\u2191' : tunnelHint(flight) < .975 ? '\u2193' : '\u2192', flow: flow.charge, multiplier: flow.multiplier, inside: flow.inside });
+          else setStats({ speed: flight.speed * 3.6, altitude: flight.y, score, elapsed: flight.elapsed, fps: Math.round(frameCount * 1000 / (timestamp - statTime)), effortHint: courseEffortHint(flight, next), target: next ? `${next.kind === 'ring' ? 'Ring' : 'Balloon'} · ${Math.round(Math.hypot(next.x - flight.x, next.y - flight.y, next.z - flight.z))} m · ${Math.round(next.y)} m altitude` : environment === 'space' ? 'Follow the starlight' : 'Follow the valley', direction: next ? next.x - flight.x > 15 ? '↗' : next.x - flight.x < -15 ? '↖' : next.y - flight.y > 8 ? '⇧' : next.y - flight.y < -8 ? '⇩' : '↑' : '↑' });
+          frameCount = 0; statTime = timestamp;
+        }
+      };
+      frame = requestAnimationFrame(animate);
+      cleanup = () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); graphics.dispose(); world.dispose(); renderer.domElement.remove(); if (engine.current === activeEngine) engine.current = null; };
     };
-    frame = requestAnimationFrame(animate);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); world.dispose(); renderer.dispose(); renderer.domElement.remove(); engine.current = null; };
-  }, [quality, environment, valleyStyle]);
-  const launch = () => { engine.current?.reset(); changeStatus('running'); };
+    void start().catch(() => { if (!cancelled) setError('3D rendering is unavailable in this browser. Choose Standard graphics or another quality setting to retry.'); });
+    return () => { cancelled = true; cleanup?.(); };
+  }, [quality, environment, valleyStyle, graphicsMode, gpuFailed, graphicsAttempt]);
+  const launch = () => { if (!engine.current) return; engine.current.reset(); changeStatus('running'); };
   const changeQuality = (next: Quality) => { changeStatus('ready'); setQuality(next); };
   const freshValue = (v: number | undefined, at: number | undefined) => v !== undefined && Date.now() - (at ?? state.sample.timestamp) < 3000 && ['simulated', 'connected'].includes(state.status) ? Math.round(v) : '—';
   const effortUnit = state.sample.watts === undefined && state.sample.cadence !== undefined ? 'RPM' : 'W';
   const suggestedEffort = Math.round((effortUnit === 'RPM' ? calibration.referenceCadence : calibration.referenceWatts) * stats.effortHint / calibration.gain);
   const awakeLabel = awakeStatusLabel(keepAwake, status, awake);
   return <section ref={workspace} className={`flight-workspace ${immersive ? 'immersive' : ''} ${isTunnel || environment === 'space' ? 'space-theme' : isRoad ? 'road-theme' : ''}`}>
-    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary" onClick={() => changeEnvironment(environment === 'valley' ? 'space' : environment === 'space' ? 'road' : environment === 'road' ? 'kaleidoscope' : 'valley')}>{isTunnel ? 'World: Kaleidoscope' : isRoad ? 'World: Road race' : environment === 'space' ? 'World: Space' : 'World: Valley'}</button><button className="secondary sound-toggle" disabled={isTunnel} aria-pressed={sound && !isTunnel} onClick={toggleSound}>{isTunnel ? 'Audio-free world' : sound ? 'Sound on' : 'Sound off'}</button><button className="secondary fullscreen-toggle" onClick={() => void toggleFullscreen()}>{immersive ? 'Exit full screen' : 'Full screen'}</button><button disabled={isRoad || isTunnel} className="secondary steering-switch" aria-pressed={assisted} onClick={() => setAssisted(!assisted)}>{isRoad || isTunnel || assisted ? 'Auto-steering on' : 'Manual steering'}</button><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
+    <div className="flight-toolbar"><div><span className="eyebrow">THE OPEN-SKY EXPERIMENT</span><h2>A different kind of headspace.</h2></div><div className="flight-actions"><button className="secondary" onClick={() => changeEnvironment(environment === 'valley' ? 'space' : environment === 'space' ? 'road' : environment === 'road' ? 'kaleidoscope' : 'valley')}>{isTunnel ? 'World: Kaleidoscope' : isRoad ? 'World: Road race' : environment === 'space' ? 'World: Space' : 'World: Valley'}</button><button className="secondary sound-toggle" disabled={isTunnel} aria-pressed={sound && !isTunnel} onClick={toggleSound}>{isTunnel ? 'Audio-free world' : sound ? 'Sound on' : 'Sound off'}</button><button className="secondary fullscreen-toggle" onClick={() => void toggleFullscreen()}>{immersive ? 'Exit full screen' : 'Full screen'}</button><button disabled={isRoad || isTunnel} className="secondary steering-switch" aria-pressed={assisted} onClick={() => setAssisted(!assisted)}>{isRoad || isTunnel || assisted ? 'Auto-steering on' : 'Manual steering'}</button><button className="secondary" onClick={() => { setShowSettings(!showSettings); if (status === 'running') changeStatus('paused'); }}>⚙ Flight settings</button><button className="secondary" disabled={!graphicsReady} onClick={() => { if (status === 'running') changeStatus('paused'); else if (status === 'paused') changeStatus('running'); else launch(); }}>{status === 'running' ? 'Ⅱ Pause' : status === 'paused' ? '▷ Resume' : '↗ Take flight'}</button></div></div>
     <div className="flight-view"><div className="scene-host" ref={host}/>
       <div className="flight-top"><span className="location-tag">{isTunnel ? 'KALEIDOSCOPE' : isRoad ? 'THE AMBER ROAD' : environment === 'space' ? '✦ THE STARLIGHT REACH' : '↟ THE AMBER VALLEY'} <small title={`Commit ${BUILD_INFO.commit} | ${BUILD_INFO.builtAt}`}>{BUILD_INFO.label} | {BUILD_INFO.commit}</small></span><span className="flight-mode">{mode === 'scenic' ? isRoad ? 'UNLIMITED GROUP RIDE' : '∞ SCENIC EXPLORATION' : `${isRoad ? 'ROAD RACE' : 'ARCADE'} · ${clock(Math.max(0, DEFAULT_RIDE_SECONDS - stats.elapsed))} LEFT`}</span></div>
       <div className="flight-hud"><Hud value={Math.round(stats.speed)} unit="KM/H" label="SPEED"/><Hud value={isRoad ? Math.round(stats.distance ?? 0) : Math.round(stats.altitude)} unit="M" label={isRoad ? "DISTANCE" : "ALTITUDE"}/>{isRoad ? <Hud value={`${stats.position ?? 3}/6`} label="POSITION"/> : <Hud value={stats.score.toString().padStart(4, '0')} label="SCORE" pulse={stats.score}/>}<Hud value={clock(stats.elapsed)} label={isRoad ? "RIDE TIME" : "FLIGHT TIME"}/></div>
@@ -262,17 +300,17 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       {(status !== 'running' || error) && <div className="flight-overlay"><div><div className="eyebrow">{status === 'finished' ? 'COURSE COMPLETE' : status === 'paused' ? 'TAKE A BREATHER' : isRoad ? 'FIND YOUR PACK. FIND YOUR PACE.' : 'YOUR LEGS. YOUR WINGS.'}</div><h2>{error ? 'The ride is on hold.' : status === 'finished' ? isRoad ? 'Across the finish line.' : 'A ride above the ordinary.' : status === 'paused' ? 'Your ride can wait.' : isRoad ? 'A little friendly competition.' : 'Pedal beyond the everyday.'}</h2><p>{error || (status === 'finished' ? isRoad ? `Finished ${stats.position ?? 3} of 6 · ${Math.round(stats.distance ?? 0)} m in ${clock(stats.elapsed)}. Ready for a rematch?` : `${stats.score} points · ${clock(stats.elapsed)} in the air. Ready for another adventure?` : status === 'paused' ? 'Your ride is paused. Resume when you’re ready.' : isRoad ? 'Ride with Maya, Leo, Robin, Ari and Sam. Hold your comfortable effort to stay with the pack; brief surges help you pass. Maya sprints, Leo holds steady, Robin attacks, Ari recovers and Sam mixes the pace. Nearby fences and trees bring the speed to life.' : isTunnel ? 'Your effort brings the tunnel to life. Follow its climbs and dips, build flow, and unfold an enormous luminous lotus. Darkness is always safe: ease your effort up or down to return to the light. This journey is entirely audio-free.' : environment === 'space' ? 'Ride among spiral galaxies and ringed planets. Thread the golden rings and pop the floating balloons. The same comfortable effort powers your flight.' : 'Follow the river, thread the golden rings, and find your own pace. A comfortable effort is all it takes.')}</p>
         {status === 'ready' && <div className="mode-select"><button className={mode === 'scenic' ? 'active' : ''} onClick={() => setMode('scenic')}>{isRoad ? 'Group ride' : '∞ Scenic ride'}<small>{isRoad ? 'No timer. Ride with the pack.' : environment === 'space' ? 'No timer. Just the stars.' : 'No timer. Just open skies.'}</small></button><button className={mode === 'arcade' ? 'active' : ''} onClick={() => setMode('arcade')}>{isRoad ? 'Road race' : '◷ Arcade course'}<small>{isRoad ? 'Five minutes. Race the pack.' : 'Five minutes. Chase a score.'}</small></button></div>}
         {isRoad && status !== 'finished' && <label className="race-pace">Pack pace<select value={difficulty} onChange={e => setDifficulty(e.target.value as RaceDifficulty)}><option value="gentle">Gentle</option><option value="moderate">Moderate</option><option value="challenging">Challenging</option></select></label>}
-        {!error && <button className="primary launch-button" onClick={() => status === 'paused' ? changeStatus('running') : launch()}>{status === 'paused' ? 'Resume ride' : isRoad ? status === 'finished' ? 'Race again' : 'Join the pack' : status === 'finished' ? 'Fly again' : 'Let’s take flight'} <span>↗</span></button>}
+        {!error && <button disabled={!graphicsReady} className="primary launch-button" onClick={() => status === 'paused' ? changeStatus('running') : launch()}>{!graphicsReady ? 'Preparing graphics…' : status === 'paused' ? 'Resume ride' : isRoad ? status === 'finished' ? 'Race again' : 'Join the pack' : status === 'finished' ? 'Fly again' : 'Let’s take flight'} <span>↗</span></button>}
         {state.status !== 'simulated' && state.status !== 'connected' && <button className="secondary" onClick={simulate}>Use simulated bike</button>}
         <small className="control-hint">{isRoad ? 'Steering is automatic. Pedal to build speed; ease off to recover.' : isTunnel ? 'Follow the luminous corridor. Pedal a little harder to climb; ease off to descend.' : assisted ? 'Auto-steering follows the rings. Pedal to gain lift; ease off to descend.' : 'Hold the left or right edge to steer. Pedal for lift; ease off to descend.'}<br/>Touch controls inside the game view. Space to pause.</small>
       </div></div>}
       {status === 'running' && !assisted && !isRoad && !isTunnel && <SteeringZones controls={controls}/>}
       {status === 'running' && (awake.kind === 'unavailable' || awake.kind === 'released') && <div className="awake-warning" role="status">{awake.message}</div>}
       {displayMessage && <div role="status" className="display-message">{displayMessage}<button aria-label="Dismiss full-screen tip" onClick={() => setDisplayMessage('')}>Close</button></div>}
-      <div className="flight-bottom"><div><span className="source-dot"/>{state.status === 'simulated' ? 'SIMULATED BIKE' : state.status === 'connected' ? 'BLUETOOTH BIKE' : 'NO BIKE DATA'} <b>{freshValue(state.sample.cadence, state.sample.cadenceAt)} <small>RPM</small></b><b>{freshValue(state.sample.watts, state.sample.wattsAt)} <small>W</small></b></div><span title={`${awake.message} | ${renderInfo}`}>{awakeLabel} | {stats.fps} FPS · {quality.toUpperCase()}</span></div>
+      <div className="flight-bottom"><div><span className="source-dot"/>{state.status === 'simulated' ? 'SIMULATED BIKE' : state.status === 'connected' ? 'BLUETOOTH BIKE' : 'NO BIKE DATA'} <b>{freshValue(state.sample.cadence, state.sample.cadenceAt)} <small>RPM</small></b><b>{freshValue(state.sample.watts, state.sample.wattsAt)} <small>W</small></b></div><span title={`${awake.message} | ${renderInfo}`}>{awakeLabel} | {stats.fps} FPS · {quality.toUpperCase()} · {graphicsLabel}</span></div>
     </div>
-    <div className="flight-controls external-controls"><div className="flight-tip"><strong>{isTunnel ? 'Follow the light. Your effort controls altitude.' : isRoad ? 'Auto-steering follows the road.' : assisted ? 'Auto-steering follows the course.' : 'Hold either edge of the game view to steer.'}</strong><p>{isRoad ? 'Hold a comfortable pace. Add a short surge to overtake.' : 'Pedal to build speed and lift. Ease off to descend.'}</p></div></div>
-    {showSettings && <div className="panel flight-settings"><div className="panel-heading"><h3>Make the flight yours.</h3><button className="text-button" onClick={() => setShowSettings(false)}>Close settings</button></div><p className="muted">{BUILD_INFO.label} | Commit {BUILD_INFO.commit} | Built {new Date(BUILD_INFO.builtAt).toLocaleString()}</p><p className="muted">{isRoad && <>Road race: comfortable power sets your baseline speed. Pack pace changes rival effort; distinct rival personalities alternate attacks and recovery, then sprint in the final 20 seconds. The road rolls gently without changing the calibrated effort-to-speed curve. Disable the dynamic racing camera below for a fixed field of view and no camera lean. Steering is automatic, tilt is ignored, and coasting slows you down. Five-minute races finish on the timer; unlimited group rides continue. </>}{isTunnel && <>Kaleidoscope steers horizontally; effort alone controls altitude. Stay inside to build flow. Five accumulated seconds earns points; 15/30 continuous seconds unlock 2x/3x. Brief excursions pause scoring and drain flow; three seconds outside resets the multiplier. Follow the light to return. The lotus always opens. Reduced effects keeps all riding and scoring features. </>}{!isRoad && !isTunnel && <>Auto-steering guides left and right toward the next target; your effort controls lift, and optional tilt or keyboard input adds pitch. Switch to manual steering above to use edge touch zones, tilt or a keyboard. Reference power is level cruise (default 45 W). Slightly less gives prompt descent; slightly more gives climb, without needing to stop pedalling. Changes affect virtual thrust only. Adjusting quality restarts the flight. Bluetooth setup and simulation RPM/watts are on the diagnostics tab. Timed rides last five minutes; the valley repeats until time runs out. Sound effects are optional, start off, and can be toggled above.</>}</p><div className="settings-grid"><label>Comfortable power <strong>{calibration.referenceWatts} W</strong><input type="range" min="30" max="200" step="5" value={calibration.referenceWatts} onChange={e => setCalibration({ ...calibration, referenceWatts: +e.target.value })}/></label><label>Cadence-only reference <strong>{calibration.referenceCadence} RPM</strong><input type="range" min="30" max="100" value={calibration.referenceCadence} onChange={e => setCalibration({ ...calibration, referenceCadence: +e.target.value })}/></label><label>Thrust gain <strong>{calibration.gain.toFixed(2)}×</strong><input type="range" min=".5" max="1.5" step=".05" value={calibration.gain} onChange={e => setCalibration({ ...calibration, gain: +e.target.value })}/></label>{environment === 'valley' && <label>Valley scenery<select aria-label="Valley scenery" value={valleyStyle} onChange={e => { const next = parseValleyStyle(e.target.value); changeStatus('ready'); setHitFeedback(undefined); setValleyStyle(next); try { localStorage.setItem('skycycle.valleyStyle', next); } catch { /* Optional preference. */ } }}><option value="classic">Classic Amber Valley</option><option value="enhanced">Enhanced Valley</option></select><small>Changing scenery restarts the flight.</small></label>}<label>Visual quality<select value={quality} onChange={e => changeQuality(e.target.value as Quality)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High (default)</option></select></label></div><div className="keep-awake-setting">{isTunnel && <label><input type="checkbox" checked={reducedEffects} onChange={e => setReducedEffects(e.target.checked)}/> Reduced effects / quiet lights and still decorations</label>}{isRoad && <label><input type="checkbox" checked={dynamicCamera} onChange={e => setDynamicCamera(e.target.checked)}/> Dynamic racing camera / gentle field of view and corner lean</label>}<label><input type="checkbox" checked={keepAwake} onChange={e => setKeepAwake(e.target.checked)}/> Keep screen awake during rides</label><p className="muted" role="status">{awake.message} Requests are released on pause, finish or leaving flight. Browser/system limits still apply.</p></div><div className="tilt-row"><button className="secondary" disabled={!tiltSupported || isRoad || isTunnel} onClick={enableTilt}>{tilt ? 'Disable tilt controls' : 'Enable optional tilt'}</button>{tilt && <button className="secondary" onClick={() => { tiltBaseline.current = null; }}>Recenter tilt</button>}<button className="secondary" onClick={simulate}>Switch to simulated bike</button><button className="secondary" onClick={() => { engine.current?.reset(); changeStatus('ready'); }}>Reset flight</button></div>{audioNotice && <p role="status" className="muted">{audioNotice}</p>}{tiltMessage && <p role="status" className="muted">{tiltMessage}</p>}<p className="muted">With measured watts, power drives thrust. Cadence-only devices use RPM. If reported cadence stops or becomes stale, thrust decays even when power remains. Power-only devices rely on power freshness. Physics is an arcade approximation, not a training or aerodynamic model.</p></div>}
+    {graphicsNotice && <p className="graphics-notice" role="status">{graphicsNotice}{isTunnel && graphicsMode === 'cinematic' && <button className="secondary" onClick={() => changeGraphics('cinematic')}>Retry Cinematic</button>}</p>}<div className="flight-controls external-controls"><div className="flight-tip"><strong>{isTunnel ? 'Follow the light. Your effort controls altitude.' : isRoad ? 'Auto-steering follows the road.' : assisted ? 'Auto-steering follows the course.' : 'Hold either edge of the game view to steer.'}</strong><p>{isRoad ? 'Hold a comfortable pace. Add a short surge to overtake.' : 'Pedal to build speed and lift. Ease off to descend.'}</p></div></div>
+    {showSettings && <div className="panel flight-settings"><div className="panel-heading"><h3>Make the flight yours.</h3><button className="text-button" onClick={() => setShowSettings(false)}>Close settings</button></div><p className="muted">{BUILD_INFO.label} | Commit {BUILD_INFO.commit} | Built {new Date(BUILD_INFO.builtAt).toLocaleString()}</p><p className="muted">{isRoad && <>Road race: comfortable power sets your baseline speed. Pack pace changes rival effort; distinct rival personalities alternate attacks and recovery, then sprint in the final 20 seconds. The road rolls gently without changing the calibrated effort-to-speed curve. Disable the dynamic racing camera below for a fixed field of view and no camera lean. Steering is automatic, tilt is ignored, and coasting slows you down. Five-minute races finish on the timer; unlimited group rides continue. </>}{isTunnel && <>Kaleidoscope steers horizontally; effort alone controls altitude. Stay inside to build flow. Five accumulated seconds earns points; 15/30 continuous seconds unlock 2x/3x. Brief excursions pause scoring and drain flow; three seconds outside resets the multiplier. Follow the light to return. The lotus always opens. Reduced effects keeps all riding and scoring features. </>}{!isRoad && !isTunnel && <>Auto-steering guides left and right toward the next target; your effort controls lift, and optional tilt or keyboard input adds pitch. Switch to manual steering above to use edge touch zones, tilt or a keyboard. Reference power is level cruise (default 45 W). Slightly less gives prompt descent; slightly more gives climb, without needing to stop pedalling. Changes affect virtual thrust only. Adjusting quality restarts the flight. Bluetooth setup and simulation RPM/watts are on the diagnostics tab. Timed rides last five minutes; the valley repeats until time runs out. Sound effects are optional, start off, and can be toggled above.</>}</p><div className="settings-grid"><label>Comfortable power <strong>{calibration.referenceWatts} W</strong><input type="range" min="30" max="200" step="5" value={calibration.referenceWatts} onChange={e => setCalibration({ ...calibration, referenceWatts: +e.target.value })}/></label><label>Cadence-only reference <strong>{calibration.referenceCadence} RPM</strong><input type="range" min="30" max="100" value={calibration.referenceCadence} onChange={e => setCalibration({ ...calibration, referenceCadence: +e.target.value })}/></label><label>Thrust gain <strong>{calibration.gain.toFixed(2)}×</strong><input type="range" min=".5" max="1.5" step=".05" value={calibration.gain} onChange={e => setCalibration({ ...calibration, gain: +e.target.value })}/></label>{environment === 'valley' && <label>Valley scenery<select aria-label="Valley scenery" value={valleyStyle} onChange={e => { const next = parseValleyStyle(e.target.value); changeStatus('ready'); setHitFeedback(undefined); setValleyStyle(next); try { localStorage.setItem('skycycle.valleyStyle', next); } catch { /* Optional preference. */ } }}><option value="classic">Classic Amber Valley</option><option value="enhanced">Enhanced Valley</option></select><small>Changing scenery restarts the flight.</small></label>}<label>Graphics style<select aria-label="Graphics style" value={graphicsMode} onChange={e => changeGraphics(e.target.value as GraphicsMode)}><option value="standard">Standard · WebGL</option><option value="cinematic">Cinematic · WebGPU experiment</option></select><small>Cinematic adds soft glow and chamber light in Kaleidoscope. Changing graphics restarts the ride.</small></label><label>Visual quality<select value={quality} onChange={e => changeQuality(e.target.value as Quality)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High (default)</option></select></label></div><div className="keep-awake-setting">{isTunnel && <label><input type="checkbox" checked={reducedEffects} onChange={e => setReducedEffects(e.target.checked)}/> Reduced effects / quiet lights and still decorations</label>}{isRoad && <label><input type="checkbox" checked={dynamicCamera} onChange={e => setDynamicCamera(e.target.checked)}/> Dynamic racing camera / gentle field of view and corner lean</label>}<label><input type="checkbox" checked={keepAwake} onChange={e => setKeepAwake(e.target.checked)}/> Keep screen awake during rides</label><p className="muted" role="status">{awake.message} Requests are released on pause, finish or leaving flight. Browser/system limits still apply.</p></div><div className="tilt-row"><button className="secondary" disabled={!tiltSupported || isRoad || isTunnel} onClick={enableTilt}>{tilt ? 'Disable tilt controls' : 'Enable optional tilt'}</button>{tilt && <button className="secondary" onClick={() => { tiltBaseline.current = null; }}>Recenter tilt</button>}<button className="secondary" onClick={simulate}>Switch to simulated bike</button><button className="secondary" onClick={() => { engine.current?.reset(); changeStatus('ready'); }}>Reset flight</button></div>{audioNotice && <p role="status" className="muted">{audioNotice}</p>}{tiltMessage && <p role="status" className="muted">{tiltMessage}</p>}<p className="muted">With measured watts, power drives thrust. Cadence-only devices use RPM. If reported cadence stops or becomes stale, thrust decays even when power remains. Power-only devices rely on power freshness. Physics is an arcade approximation, not a training or aerodynamic model.</p></div>}
   </section>;
 }
 function Hud({ value, unit, label, pulse }: { value: string | number; unit?: string; label: string; pulse?: number }) { return <div><span>{label}</span><strong key={pulse} className={pulse ? 'score-changed' : undefined}>{value}<small>{unit}</small></strong></div>; }
