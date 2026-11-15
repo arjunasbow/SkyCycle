@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Quality } from './world';
 export type RoadDetailPut = (name:string, geo:THREE.BufferGeometry, material:THREE.Material, d:number, offset:number, y:number, sx:number, sy:number, sz:number, color?:number, tiltX?:number, tiltZ?:number) => void;
-export const cinematicRoadBudget = {low:{trees:16,flowers:18,grass:35,terrain:26},medium:{trees:26,flowers:65,grass:85,terrain:38},high:{trees:38,flowers:120,grass:150,terrain:48}};
+export const cinematicRoadBudget = {low:{trees:16,flowers:18,grassSeeds:35,terrain:26},medium:{trees:26,flowers:65,grassSeeds:85,terrain:38},high:{trees:38,flowers:120,grassSeeds:150,terrain:48}};
 /** Shared assets and fixed per-chunk instance batches; no live mesh allocation. */
 export function roadDetails(quality:Quality) {
   const budget=cinematicRoadBudget[quality], mat=(color:number)=>new THREE.MeshLambertMaterial({color});
@@ -19,8 +19,6 @@ export function roadDetails(quality:Quality) {
   const green=mat(0xffffff), bark=mat(0x655542), plaster=mat(0xffffff), timber=mat(0x675345), roof=mat(0x875e50), stone=mat(0x8e9899), cream=mat(0xdcd6bb), glass=mat(0x45616a), dark=mat(0x34464c);
   const gableShape=new THREE.Shape();gableShape.moveTo(-.5,0);gableShape.lineTo(0,.6);gableShape.lineTo(.5,0);gableShape.closePath();
   const gable=new THREE.ExtrudeGeometry(gableShape,{depth:1,bevelEnabled:false});gable.translate(0,0,-.5);
-  const grassGeometry=new THREE.BufferGeometry();grassGeometry.setAttribute('position',new THREE.Float32BufferAttribute([-.3,0,0,0,1,0,.3,0,0,0,0,-.3,0,.8,0,0,0,.3],3));grassGeometry.computeVertexNormals();
-  const grassMaterial=new THREE.MeshLambertMaterial({color:0xffffff,side:THREE.DoubleSide});
   const flowerShape=new THREE.Shape();for(let i=0;i<=40;i++){const a=i/40*Math.PI*2,r=.65+.24*Math.cos(a*5),x=Math.cos(a)*r,y=Math.sin(a)*r;if(i===0)flowerShape.moveTo(x,y);else flowerShape.lineTo(x,y);}flowerShape.closePath();
   const flower=new THREE.ShapeGeometry(flowerShape,2);flower.rotateX(-Math.PI/2);
   const flowerMaterial=new THREE.MeshLambertMaterial({color:0xffffff,side:THREE.DoubleSide});
@@ -39,7 +37,8 @@ export function roadDetails(quality:Quality) {
       }
       if(i%2===0){const bd=d+3,bo=side*(13+random()*4);put('bushes',crown,green,bd,bo,terrain(bo,bd)+.7,1.3,1.2,1.8,0x758c54);}
     }
-    for(let i=0;i<budget.grass;i++){const d=start+random()*200,offset=(i%2?-1:1)*(7.5+random()*4);put('detail-grass',grassGeometry,grassMaterial,d,offset,terrain(offset,d),.5+random()*.5,.4+random()*.6,.5,[0x6c8550,0x869955,0x9ca66c][i%3]);}
+    // Retain artwork seed consumption while omitting the old triangular grass tufts.
+    for(let i=0;i<budget.grassSeeds;i++){random();random();random();random();}
     for(let i=0;i<budget.flowers;i++){
       const d=start+random()*200,offset=(i%2?-1:1)*(7.8+random()*2.5),y=terrain(offset,d);
       put('detail-flower-stems',trunk,green,d,offset,y+.26,.035,.55,.035,0x64814e);
@@ -83,7 +82,7 @@ export function roadDetails(quality:Quality) {
       for(const side of [-1,1]){
         put('bridge-arches',arch,stone,1100,side*7.6,height(1100)-.1,1,1,1);
         for(let i=0;i<18;i++){const d=1074+i*3;put('bridge-stone',box,stone,d,side*7.6,height(d)+.5,.8,1.15,2.95);put('bridge-cap',box,cream,d,side*7.6,height(d)+1.13,1.05,.20,3.02);put('bridge-mortar',box,dark,d+1.48,side*7.14,height(d)+.45,.015,1.05,.035);}
-        for(let i=0;i<12;i++){const d=1088+i*2.2,offset=side*(13+random()*20);put('riverbank-reeds',grassGeometry,grassMaterial,d,offset,height(d)-1.5,.5,1.5,.5,0x819465);}
+        for(let i=0;i<12;i++)random(); // Former triangular reed placements.
         // Preserve downstream artwork placement while removing the old river stones.
         for(let i=0;i<5;i++)random();
       }

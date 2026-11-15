@@ -13,7 +13,7 @@ import { createCinematic } from './cinematic';
 
 it.each<Quality>(['low','medium','high'])('builds detailed road scenery and bounded shared bicycle geometry at %s',quality=>{
   const world=createWorld(quality,'road','enhanced',true);
-  for(const name of ['bridge-arches','balcony-balusters','window-shutters','chimney-caps','cinematic-stream','detail-grass','detail-flower-heads','village-tower'])expect(world.scene.getObjectByName(name)).toBeDefined();
+  for(const name of ['bridge-arches','balcony-balusters','window-shutters','chimney-caps','cinematic-stream','detail-flower-heads','village-tower'])expect(world.scene.getObjectByName(name)).toBeDefined();
   expect(world.bike.userData.components).toContain('water-bottle');
   const helmets=world.bike.getObjectByName('rider-helmet') as THREE.Mesh;expect(helmets.geometry).toBeInstanceOf(THREE.SphereGeometry);
   const spokes=world.bike.getObjectByName('wheel-spokes') as THREE.InstancedMesh;expect(spokes.count).toBe(quality==='low'?16:24);
@@ -24,6 +24,8 @@ it.each<Quality>(['low','medium','high'])('builds detailed road scenery and boun
   let bicycleDraws=0;world.bike.traverse(object=>{if(object instanceof THREE.Mesh)bicycleDraws++;});expect(bicycleDraws).toBeLessThan(38);
   expect(world.scene.getObjectByName('river-stones')).toBeUndefined();
   expect(world.scene.getObjectByName('detail-verges')).toBeUndefined();
+  expect(world.scene.getObjectByName('detail-grass')).toBeUndefined();
+  expect(world.scene.getObjectByName('riverbank-reeds')).toBeUndefined();
   const crowns=world.scene.getObjectByName('broadleaf-canopy') as THREE.InstancedMesh;
   expect(crowns.geometry).toBeInstanceOf(THREE.SphereGeometry);
   expect(crowns.count).toBe(Math.ceil((quality==='low'?16:quality==='medium'?26:38)/3));
