@@ -1,0 +1,107 @@
+import * as THREE from 'three';
+import { WebGPURenderer, MeshBasicNodeMaterial, PostProcessing } from 'three/webgpu';
+import { color, float, mix, pass, sin, smoothstep, uniform, uv, vec2, vec3 } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import type { Graphics } from './graphics';
+import { AdaptiveResolution, graphicsPixelCap } from './graphics-settings';
+import type { Quality } from './world';
+import { distanceAt, JOURNEY_LENGTH, routeX, routeY } from './kaleidoscope';
+
+/** Opt-in WebGPU experiment for Kaleidoscope. Nothing is imported on the standard path. */
+export async function createCinematic(quality: Quality): Promise<Graphics> {
+  if (!('gpu' in navigator)) throw new Error('WebGPU unavailable');
+  const renderer = new WebGPURenderer({ antialias: quality === 'high', powerPreference: 'high-performance', alpha: false });
+  try {
+    await renderer.init();
+    // Three can fall back internally to WebGL. Do not label that as WebGPU.
+    if (!(renderer.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend) throw new Error('WebGPU adapter unavailable');
+  } catch (error) { renderer.dispose(); throw error; }
+  const adaptive = new AdaptiveResolution(Math.min(window.devicePixelRatio, graphicsPixelCap(quality)));
+  renderer.setPixelRatio(adaptive.ratio); renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+  renderer.info.autoReset = false;
+  const clock = uniform(0), shimmer = uniform(1);
+  let scenePass: ReturnType<typeof pass> | undefined, glow: ReturnType<typeof bloom> | undefined;
+  let post: PostProcessing | undefined;
+  let atmosphere: THREE.Group | undefined;
+  const replaced = new Set<THREE.Material>();
+  let disposed = false, lost = false;
+  let failureHandler: (() => void) | undefined;
+  renderer.onDeviceLost = () => { if (!disposed) { lost = true; failureHandler?.(); } };
+  return {
+    onFailure(handler) { failureHandler = handler; if (lost) handler(); },
+    renderer, label: 'WebGPU · CINEMATIC', notice: '',
+    async prepare(scene, camera) {
+      // Translate the one GLSL-only material to TSL, including instanced UV support.
+      // Material replacement is confined to this newly-created scene.
+      scene.traverse(object => {
+        if (!(object instanceof THREE.Mesh)) return;
+        if (object.name === 'kaleidoscope-liquid-glass') {
+          const material = new MeshBasicNodeMaterial({ side: THREE.DoubleSide, transparent: true, depthWrite: false });
+          const p = uv().mul(vec2(18, 4));
+          const ripple = sin(p.x.add(sin(p.y.mul(2).add(clock.mul(.25))).mul(1.8)));
+          const seam = smoothstep(.035, .12, sin(p.x.mul(1.6).add(sin(p.y.add(clock.mul(.15))))).abs());
+          material.colorNode = mix(vec3(.025, .16, .24), vec3(.24, .045, .32), ripple.mul(.5).add(.5)).mul(seam.mul(.65).add(.35)).mul(1.8);
+          material.opacityNode = float(.24);
+          replaced.add(object.material as THREE.Material); object.material = material;
+        }
+        // HDR values produce a restrained halo on the light sources, not on the HUD or rider.
+        if (['kaleidoscope-rings', 'kaleidoscope-frames', 'kaleidoscope-lanterns', 'kaleidoscope-flow-ribbons'].includes(object.name)) {
+          const original = object.material as THREE.MeshBasicMaterial;
+          const material = new MeshBasicNodeMaterial({ color: original.color, side: original.side, transparent: original.transparent, opacity: original.opacity, depthWrite: original.depthWrite });
+          material.colorNode = color(original.color).mul(2.1);
+          // NodeMaterial's built-in vertex/instance colours remain active.
+          replaced.add(original); object.material = material;
+        }
+      });
+      // A small HDR lift on the shared feather and lotus-edge materials lets them catch the glow.
+      const luminous = new Map<THREE.Material, MeshBasicNodeMaterial>();
+      for (const name of ['kaleidoscope-paradise-bird', 'kaleidoscope-lotus']) {
+        scene.getObjectByName(name)?.traverse(object => {
+          if (!(object instanceof THREE.Mesh) || Array.isArray(object.material)) return;
+          const original = object.material;
+          if (!(original instanceof THREE.MeshBasicMaterial) || name.includes('lotus') && !original.wireframe && original.color.getHex() === 0x421e66) return;
+          let material = luminous.get(original);
+          if (!material) {
+            material = new MeshBasicNodeMaterial({ color: original.color, side: original.side, wireframe: original.wireframe });
+            material.colorNode = color(original.color).mul(1.4); luminous.set(original, material); replaced.add(original);
+          }
+          object.material = material;
+        });
+      }
+      // Soft translucent vertical veils give the broad encounter chambers atmospheric depth.
+      // Fixed pool, outside the scoring corridor, no camera motion or gameplay changes.
+      const veils = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide }), 8);
+      veils.name = 'cinematic-light-veils'; veils.frustumCulled = false;
+      const veilMaterial = veils.material as MeshBasicNodeMaterial;
+      const u = uv();
+      veilMaterial.colorNode = mix(vec3(.13, .35, .65), vec3(.45, .16, .5), u.y);
+      veilMaterial.opacityNode = sin(u.x.mul(Math.PI)).pow(3).mul(sin(u.y.mul(Math.PI))).mul(.055).mul(shimmer);
+      const transform = new THREE.Object3D();
+      for (let i = 0; i < 8; i++) { transform.position.set((i % 2 ? 1 : -1) * (24 + i * 3), 0, -i * 14); transform.scale.set(5 + i, 95, 1); transform.rotation.z = (i % 2 ? 1 : -1) * .17; transform.updateMatrix(); veils.setMatrixAt(i, transform.matrix); }
+      atmosphere = new THREE.Group(); atmosphere.name = 'cinematic-atmosphere'; atmosphere.add(veils); scene.add(atmosphere);
+      scenePass = pass(scene, camera);
+      const beauty = scenePass.getTextureNode();
+      glow = bloom(beauty, quality === 'low' ? .24 : .38, .5, .9);
+      post = new PostProcessing(renderer); post.outputNode = beauty.add(glow);
+      await renderer.compileAsync(scene, camera);
+      // Compile the post stack too while the ride is still on its loading screen.
+      post.render();
+    },
+    render(_scene, camera, elapsed, reduced, dt) {
+      if (disposed || !post || !glow) return;
+      clock.value = reduced ? 0 : elapsed;
+      const encounter = Math.floor((distanceAt(camera.position.z) + 266) / JOURNEY_LENGTH) * JOURNEY_LENGTH + 1380;
+      atmosphere?.position.set(routeX(encounter), routeY(encounter) + 5, 110 - encounter);
+      shimmer.value = reduced ? .45 : .85 + Math.sin(elapsed * .25) * .15;
+      glow.strength.value = reduced ? .14 : quality === 'low' ? .24 : .38;
+      if (adaptive.sample(dt)) renderer.setPixelRatio(adaptive.ratio);
+      renderer.info.reset(); post.render();
+    },
+    dispose() {
+      if (disposed) return; disposed = true;
+      post?.dispose(); glow?.dispose(); scenePass?.dispose();
+      replaced.forEach(material => material.dispose()); replaced.clear(); renderer.dispose();
+    }
+  };
+}
