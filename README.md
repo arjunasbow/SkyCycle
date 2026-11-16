@@ -358,3 +358,7 @@ Space whole-scene CPU inventory before culling/preparation:
 | High | 145,776 | 19,704 | 330 | 43 |
 
 Validation: 135 tests, production build, Cloudflare deployment dry run and diff check pass. Added coverage checks lower-right arrival/departure for both birds, Sputnik timing/re-entry/pause/reduced effects/reset, crater relief, detailed rider/retained rockets, native Space material preparation, quality budgets, bounded scene objects and attached-resource disposal. Preparation uses a mocked graphics backend; actual WebGPU rendering and iPhone/Bluefy performance remain to be reviewed on-device. Flight routes, scoring, effort mapping and controls are unchanged.
+
+### Quiet bird-of-paradise glide
+
+The Kaleidoscope bird now keeps its wings outstretched with no wingbeats during flight, arrival or departure. Its drift runs at 40% of the previous animation speed, with gentler banking, pitch and tail movement. The lower-right entrance/exit and reward rules are retained. Valley’s bird and Sputnik are unchanged.
