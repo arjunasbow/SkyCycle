@@ -174,15 +174,15 @@ export function addKaleidoscope(scene: THREE.Scene, quality: Quality) {
     const birdDt = Math.max(0, Math.min(.1, time - previousBirdTime)); previousBirdTime = time;
     birdPresence = reduced ? (earnedBird ? 1 : 0) : THREE.MathUtils.clamp(birdPresence + birdDt * (earnedBird ? .5 : -1), 0, 1);
     bird.visible = birdPresence > .001;
-    const t = reduced ? 0 : time;
-    companionOffset(birdOffset,birdPresence,time,reduced,5.3);
+    const t = reduced ? 0 : time * .4;
+    companionOffset(birdOffset,birdPresence,t,reduced,5.3);
     const heading = Math.atan2(routeX(distance + 20) - routeX(distance), 20);
     bird.position.set(bike.x + Math.cos(heading)*birdOffset.x-Math.sin(heading)*birdOffset.z,bike.y+birdOffset.y,bike.z+Math.sin(heading)*birdOffset.x+Math.cos(heading)*birdOffset.z);
-    bird.rotation.set(Math.cos(t*1.8)*.09,-heading+Math.sin(t*.7)*.2,Math.cos(t*.7)*.16);
-    const flap = reduced ? 0 : Math.sin(t*10)*(.18+.22*Math.max(0,Math.sin(t*.9)));
-    wings[0].rotation.z = -.06 + flap;
+    bird.rotation.set(Math.cos(t*1.8)*.045,-heading+Math.sin(t*.7)*.12,Math.cos(t*.7)*.075);
+    // Wings stay outstretched throughout the glide, including arrival and departure.
+    wings[0].rotation.z = -.06;
     wings[1].rotation.z = -wings[0].rotation.z;
-    tail.rotation.x = reduced ? 0 : Math.sin(t*1.8-.8)*.14;
+    tail.rotation.x = reduced ? 0 : Math.sin(t*1.8-.8)*.06;
     for (const batch of batches) { batch.instanceMatrix.needsUpdate = true; if (batch.instanceColor) batch.instanceColor.needsUpdate = true; }
   }, dispose() { encounterScenery.dispose(); } };
 }
