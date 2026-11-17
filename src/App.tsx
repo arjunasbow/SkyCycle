@@ -1,3 +1,4 @@
+import RideDiary from './diary/RideDiary';
 import { BUILD_INFO } from './build-info';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { BluetoothBike } from './bike/bluetooth';
@@ -39,6 +40,7 @@ export default function App() {
     <main>
       <div className="page-heading"><div><div className="eyebrow">A LITTLE EFFORT. A WHOLE NEW PERSPECTIVE.</div><h1>Your next ride is up.</h1><p>Connect your bike. Find your rhythm. Take to the skies.</p></div><span className="phase-tag">HARDWARE COMPATIBILITY UNVERIFIED</span></div>
       <nav className="tabs" aria-label="Workspace"><button className={tab === 'diagnostics' ? 'selected' : ''} onClick={() => setTab('diagnostics')}>01 <span>Bike diagnostics</span></button><button className={tab === 'flight' ? 'selected' : ''} onClick={() => setTab('flight')}>02 <span>Flight simulator</span></button><span className="tab-note">READ-ONLY BLUETOOTH · NO RESISTANCE CONTROL</span></nav>
+      <RideDiary/>
       {tab === 'flight' ? <Suspense fallback={<div className="panel">Preparing the valley…</div>}><Game adapter={adapter} state={state} simulate={simulate}/></Suspense> : <>
         <section className="diagnostic-layout">
           <div className="panel connection-panel"><div className="panel-heading"><span className="eyebrow">THE CONNECTION</span><span className={`status ${state.status}`}><i/>{state.status}</span></div><h2>Meet your engine.</h2><p className="muted">Explore the data behind your ride before your first flight.</p>
