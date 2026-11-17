@@ -1,4 +1,5 @@
 import { routeX, routeY, CHAPTERS, chapterAt, distanceAt, initialFlow, stepFlow, stepTunnel, tunnelHint } from './kaleidoscope';
+import { RideRecorder } from '../diary/rides';
 import { BUILD_INFO } from '../build-info';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -24,6 +25,14 @@ interface Stats { flow?: number; multiplier?: number; inside?: boolean; rivals?:
 const clock = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
 export default function Game({ adapter, state, simulate }: { adapter: BikeDataAdapter; state: BikeState; simulate: () => void }) {
   const workspace = useRef<HTMLElement>(null);
+  const journal = useRef<RideRecorder | null>(null);
+  if (!journal.current) journal.current = new RideRecorder();
+  useEffect(() => {
+    const save = () => journal.current?.checkpoint();
+    const hidden = () => { if (document.hidden) save(); };
+    window.addEventListener('pagehide', save); document.addEventListener('visibilitychange', hidden);
+    return () => { window.removeEventListener('pagehide', save); document.removeEventListener('visibilitychange', hidden); journal.current?.reset(); };
+  }, []);
   const bikeStateRef = useRef(state); bikeStateRef.current = state;
   const [immersive, setImmersive] = useState(false), [displayMessage, setDisplayMessage] = useState('');
   const nativeFullscreen = useRef(false);
@@ -100,7 +109,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
     document.addEventListener('fullscreenchange', changed); window.addEventListener('keydown', escape);
     return () => { document.removeEventListener('fullscreenchange', changed); window.removeEventListener('keydown', escape); };
   }, []);
-  const changeStatus = (next: PlayStatus) => { if (next === 'running' && !isTunnel && audio.current.enabled) void audio.current.unlock(); statusRef.current = next; setStatus(next); };
+  const changeStatus = (next: PlayStatus) => { if (next === 'paused') journal.current?.checkpoint(); else if (next === 'finished') journal.current?.finish(true); else if (next === 'ready') journal.current?.finish(); if (next === 'running' && !isTunnel && audio.current.enabled) void audio.current.unlock(); statusRef.current = next; setStatus(next); };
   useEffect(() => { calibrationRef.current = calibration; }, [calibration]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { setTiltSupported(typeof DeviceOrientationEvent !== 'undefined'); }, []);
@@ -162,7 +171,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       let race = initialRace(), roadLap = 0, flow = initialFlow(), valleyCompanion = initialValleyCompanion();
       let passSequence = 0, passExpiry = 0;
       const passSides = race.riders.map(rider => Math.sign(rider.distance - race.distance));
-      let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0, hitSequence = 0;
+      let flight = initialFlight(), score = 0, frame = 0, lastTime = performance.now(), statTime = lastTime, frameCount = 0, accumulator = 0, hitSequence = 0, ringsCollected = 0, balloonsCollected = 0;
       const targetCamera = new THREE.Vector3(), targetLook = new THREE.Vector3(), look = new THREE.Vector3(), encounterLook = new THREE.Vector3();
       const resetCamera = () => {
         if (isRoad) {
@@ -177,7 +186,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
       // Populate per-instance colours/transforms before warming the shaders.
       world.bike.position.set(flight.x, flight.y, flight.z);
       world.updateTunnel?.(flight.elapsed, flow, reducedEffectsRef.current);
-      const activeEngine = { reset() { flight = initialFlight(); flow = initialFlow(); valleyCompanion = initialValleyCompanion(); world.resetValley?.(); world.resetSpace?.(); race = initialRace(); roadLap = 0; setPassNotice(undefined); passExpiry = 0; race.riders.forEach((rider, i) => { passSides[i] = Math.sign(rider.distance - race.distance); }); if (isRoad) racePose(race, flight); score = 0; setHitFeedback(undefined); setStats(previous => ({ ...previous, score: 0, elapsed: 0, flow: 0, multiplier: 1, inside: true, position: isRoad ? racePosition(race) : undefined, distance: 0 })); world.resetTargets(); resetCamera(); accumulator = 0; } };
+      const activeEngine = { reset() { journal.current?.reset(); ringsCollected = 0; balloonsCollected = 0; flight = initialFlight(); flow = initialFlow(); valleyCompanion = initialValleyCompanion(); world.resetValley?.(); world.resetSpace?.(); race = initialRace(); roadLap = 0; setPassNotice(undefined); passExpiry = 0; race.riders.forEach((rider, i) => { passSides[i] = Math.sign(rider.distance - race.distance); }); if (isRoad) racePose(race, flight); score = 0; setHitFeedback(undefined); setStats(previous => ({ ...previous, score: 0, elapsed: 0, flow: 0, multiplier: 1, inside: true, position: isRoad ? racePosition(race) : undefined, distance: 0 })); world.resetTargets(); resetCamera(); accumulator = 0; } };
       const resize = () => { const { width, height } = container.getBoundingClientRect(); renderer.setSize(Math.max(1, width), Math.max(1, height)); camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); };
       resize();
       try { await graphics.prepare(world.scene, camera); }
@@ -233,11 +242,13 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
             stepFlight(flight, { ...input, steer: assistedRef.current ? assistedSteering(flight, world.targets) : input.steer }, effort, 1 / 60, environment === 'space' ? 4 : Math.max(4, terrainHeight(flight.x, flight.z) + 4));
             const gained = collectTargets(prev, flight, world.targets, hit => {
               world.celebrate(hit.index); audio.current.play(hit.target.kind);
+              if (hit.target.kind === 'ring') ringsCollected++; else balloonsCollected++;
               setHitFeedback({ sequence: ++hitSequence, points: hit.points, kind: hit.target.kind });
             });
             if (environment === 'valley' || environment === 'space') stepValleyCompanion(valleyCompanion, prev, flight, world.targets, 1 / 60, true, effort > 0);
             score += gained; if (gained) { const currentScore = score; setStats(previous => ({ ...previous, score: currentScore, elapsed: flight.elapsed })); }
             }
+            journal.current?.tick(environment, modeRef.current, bikeStateRef.current, Date.now(), 1 / 60, {score, metres:isRoad?race.distance:0, rings:ringsCollected, balloons:balloonsCollected, inside:isTunnel&&flow.inside, streak:isTunnel?flow.streak:0, position:isRoad?racePosition(race):0});
             accumulator -= 1 / 60;
             if (timedRideFinished(modeRef.current, flight.elapsed)) { race.elapsed = DEFAULT_RIDE_SECONDS; flight.elapsed = DEFAULT_RIDE_SECONDS; const finalScore = score; setStats(previous => ({ ...previous, score: finalScore, elapsed: DEFAULT_RIDE_SECONDS, position: isRoad ? racePosition(race) : undefined, distance: race.distance })); changeStatus('finished'); break; }
             if (isRoad) {
@@ -294,7 +305,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         }
       };
       frame = requestAnimationFrame(animate);
-      cleanup = () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); disposeScene(); renderer.domElement.remove(); if (engine.current === activeEngine) engine.current = null; };
+      cleanup = () => { journal.current?.reset(); cancelAnimationFrame(frame); observer.disconnect(); renderer.domElement.removeEventListener('webglcontextlost', contextLost); disposeScene(); renderer.domElement.remove(); if (engine.current === activeEngine) engine.current = null; };
       } catch (error) { disposeScene(); throw error; }
     };
     void start().catch(() => { if (!cancelled) setError('3D rendering is unavailable in this browser. Choose Standard graphics or another quality setting to retry.'); });
@@ -322,6 +333,7 @@ export default function Game({ adapter, state, simulate }: { adapter: BikeDataAd
         {status === 'ready' && <div className="mode-select"><button className={mode === 'scenic' ? 'active' : ''} onClick={() => setMode('scenic')}>{isRoad ? 'Group ride' : '∞ Scenic ride'}<small>{isRoad ? 'No timer. Ride with the pack.' : environment === 'space' ? 'No timer. Just the stars.' : 'No timer. Just open skies.'}</small></button><button className={mode === 'arcade' ? 'active' : ''} onClick={() => setMode('arcade')}>{isRoad ? 'Road race' : '◷ Arcade course'}<small>{isRoad ? 'Five minutes. Race the pack.' : 'Five minutes. Chase a score.'}</small></button></div>}
         {isRoad && status !== 'finished' && <label className="race-pace">Pack pace<select value={difficulty} onChange={e => setDifficulty(e.target.value as RaceDifficulty)}><option value="gentle">Gentle</option><option value="moderate">Moderate</option><option value="challenging">Challenging</option></select></label>}
         {!error && <button disabled={!graphicsReady} className="primary launch-button" onClick={() => status === 'paused' ? changeStatus('running') : launch()}>{!graphicsReady ? 'Preparing graphics…' : status === 'paused' ? 'Resume ride' : isRoad ? status === 'finished' ? 'Race again' : 'Join the pack' : status === 'finished' ? 'Fly again' : 'Let’s take flight'} <span>↗</span></button>}
+        {status === 'paused' && <button className="secondary" onClick={() => changeStatus('finished')}>Finish &amp; save ride</button>}
         {state.status !== 'simulated' && state.status !== 'connected' && <button className="secondary" onClick={simulate}>Use simulated bike</button>}
         <small className="control-hint">{isRoad ? 'Steering is automatic. Pedal to build speed; ease off to recover.' : isTunnel ? 'Follow the luminous corridor. Pedal a little harder to climb; ease off to descend.' : assisted ? 'Auto-steering follows the rings. Pedal to gain lift; ease off to descend.' : 'Hold the left or right edge to steer. Pedal for lift; ease off to descend.'}<br/>Touch controls inside the game view. Space to pause.</small>
       </div></div>}
